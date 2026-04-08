@@ -1,0 +1,26 @@
+{
+  "name": "VISION — Object Detector",
+  "short_name": "VISION",
+  "description": "リアルタイム物体検出PWAアプリ",
+  "start_url": "/detect/",
+  "scope": "/detect/",
+  "id": "/detect/",
+  "display": "standalone",
+  "background_color": "#050a05",
+  "theme_color": "#050a05",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

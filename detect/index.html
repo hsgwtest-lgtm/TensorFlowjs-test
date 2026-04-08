@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+
+<html lang="ja">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+  <title>VISION — Object Detector</title>
+
+  <link rel="manifest" href="manifest.json"/>
+  <meta name="theme-color" content="#050a05"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black"/>
+  <meta name="apple-mobile-web-app-title" content="VISION"/>
+  <link rel="apple-touch-icon" href="icon-192.png"/>
+
+  <!-- TensorFlow.js + COCO-SSD -->
+
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
+
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+
+  <style>
+    :root {
+      --green:   #00ff41;
+      --green2:  #00c832;
+      --green3:  rgba(0,255,65,0.15);
+      --red:     #ff3a3a;
+      --amber:   #ffb800;
+      --bg:      #050a05;
+      --safe-t:  env(safe-area-inset-top, 0px);
+      --safe-b:  env(safe-area-inset-bottom, 0px);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0;
+        -webkit-tap-highlight-color: transparent; }
+    html, body {
+      width: 100%; height: 100dvh; overflow: hidden;
+      background: var(--bg);
+      font-family: 'Courier New', 'Menlo', monospace;
+      color: var(--green);
+    }
+
+    /* ═══ CAMERA LAYER ═══ */
+    #video {
+      position: fixed; inset: 0;
+      width: 100%; height: 100%;
+      object-fit: cover;
+      opacity: 0; transition: opacity .5s;
+    }
+    #video.ready { opacity: 1; }
+
+    #canvas {
+      position: fixed; inset: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+    }
+
+
+
+    /* ═══ HUD FRAME ═══ */
+    #hud {
+      position: fixed; inset: 0; pointer-events: none; z-index: 20;
+    }
+
+    /* Crosshair — cross only */
+    #crosshair {
+      position: absolute; top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 32px; height: 32px;
+    }
+    .ch-h, .ch-v {
+      position: absolute; background: rgba(255,255,255,0.75);
+    }
+    .ch-h { top: 50%; left: -14px; right: -14px; height: 1.5px; transform: translateY(-50%); }
+    .ch-v { left: 50%; top: -14px; bottom: -14px; width: 1.5px; transform: translateX(-50%); }
+    /* gap in center so lines don't cross */
+    .ch-h::after, .ch-v::after {
+      content: ''; position: absolute; background: transparent;
+    }
+
+    /* ═══ TOP BAR ═══ */
+    #topbar {
+      position: fixed; top: 0; left: 0; right: 0;
+      padding: calc(var(--safe-t) + 8px) 16px 8px;
+      display: flex; align-items: center; gap: 10px;
+      background: linear-gradient(rgba(5,10,5,0.85), transparent);
+      z-index: 30;
+    }
+    .logo {
+      font-size: 18px; font-weight: 700; letter-spacing: 5px;
+      color: var(--green);
+      text-shadow: 0 0 12px var(--green);
+    }
+    .logo span { color: var(--green2); }
+    .spacer { flex: 1; }
+    #fps-box {
+      font-size: 11px; letter-spacing: 1px;
+      padding: 3px 8px; border: 1px solid rgba(0,255,65,0.4);
+      color: var(--green); background: rgba(0,255,65,0.05);
+    }
+    #status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 8px var(--green);
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%,100% { opacity: 1; } 50% { opacity: 0.3; }
+    }
+    #status-dot.loading { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+    #status-dot.error   { background: var(--red);   box-shadow: 0 0 8px var(--red); animation: none; }
+
+    /* ═══ BOTTOM PANEL ═══ */
+    #bottom {
+      position: fixed; bottom: 0; left: 0; right: 0;
+      padding: 10px 14px calc(var(--safe-b) + 14px);
+      background: linear-gradient(transparent, rgba(5,10,5,0.9));
+      z-index: 30;
+    }
+    #detect-count {
+      font-size: 10px; letter-spacing: 3px; color: rgba(0,255,65,0.5);
+      margin-bottom: 6px;
+    }
+    #detect-list {
+      display: flex; flex-wrap: wrap; gap: 5px;
+      min-height: 24px;
+    }
+    .det-tag {
+      font-size: 11px; padding: 3px 8px;
+      border: 1px solid;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      animation: tagIn .15s ease;
+    }
+    @keyframes tagIn {
+      from { opacity: 0; transform: scale(0.9); }
+      to   { opacity: 1; transform: scale(1); }
+    }
+
+    /* ═══ SPLASH ═══ */
+    #splash {
+      position: fixed; inset: 0; z-index: 100;
+      background: var(--bg);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 20px;
+      padding: 40px;
+    }
+    #splash .title {
+      font-size: 32px; letter-spacing: 10px; color: var(--green);
+      text-shadow: 0 0 20px var(--green);
+      animation: glitch 4s infinite;
+    }
+    @keyframes glitch {
+      0%,95%,100% { text-shadow: 0 0 20px var(--green); }
+      96% { text-shadow: -2px 0 var(--red), 2px 0 #00f; }
+      97% { text-shadow: 2px 0 var(--red), -2px 0 #00f; }
+      98% { text-shadow: 0 0 20px var(--green); }
+    }
+    #splash .sub {
+      font-size: 11px; letter-spacing: 3px; color: rgba(0,255,65,0.5);
+    }
+    #splash .progress-wrap {
+      width: 200px; height: 2px; background: rgba(0,255,65,0.15);
+      position: relative; overflow: hidden;
+    }
+    #splash-bar {
+      height: 100%; background: var(--green);
+      box-shadow: 0 0 8px var(--green);
+      width: 0%; transition: width .3s ease;
+    }
+    #splash-msg { font-size: 11px; color: rgba(0,255,65,0.6); letter-spacing: 2px; }
+    #start-btn {
+      display: none;
+      padding: 12px 36px;
+      border: 1px solid var(--green);
+      background: rgba(0,255,65,0.08);
+      color: var(--green);
+      font-family: inherit; font-size: 13px; letter-spacing: 4px;
+      cursor: pointer;
+      text-transform: uppercase;
+      transition: all .2s;
+    }
+    #start-btn:active { background: rgba(0,255,65,0.2); }
+    #start-btn.visible { display: block; }
+
+    /* Permission screen */
+    #perm-screen {
+      display: none; position: fixed; inset: 0; z-index: 101;
+      background: var(--bg);
+      flex-direction: column; align-items: center; justify-content: center;
+      gap: 24px; padding: 40px; text-align: center;
+    }
+    #perm-screen.show { display: flex; }
+    #perm-screen .icon { font-size: 52px; }
+    #perm-screen p { font-size: 13px; line-height: 1.8; color: rgba(0,255,65,0.7); letter-spacing: 1px; }
+    #perm-btn {
+      padding: 14px 40px;
+      border: 1px solid var(--green);
+      background: rgba(0,255,65,0.1);
+      color: var(--green);
+      font-family: inherit; font-size: 13px; letter-spacing: 4px;
+      cursor: pointer; text-transform: uppercase;
+    }
+    #perm-btn:active { background: rgba(0,255,65,0.25); }
+    #cam-toggle {
+      background: rgba(5,10,5,0.7);
+      border: 1px solid rgba(0,255,65,0.3);
+      color: var(--green);
+      font-family: inherit; font-size: 18px;
+      padding: 4px 10px;
+      cursor: pointer;
+      pointer-events: all;
+      line-height: 1;
+    }
+  </style>
+
+</head>
+<body>
+
+<!-- Camera -->
+
+<video id="video" autoplay playsinline muted webkit-playsinline></video>
+<canvas id="canvas"></canvas>
+
+<!-- Overlays (removed) -->
+
+<!-- HUD frame -->
+
+<div id="hud">
+  <div id="crosshair">
+    <div class="ch-h"></div>
+    <div class="ch-v"></div>
+  </div>
+</div>
+
+<!-- Top bar -->
+
+<div id="topbar">
+  <div class="logo">V<span>I</span>SION</div>
+  <div class="spacer"></div>
+  <button id="cam-toggle" title="カメラ切替">⟳</button>
+  <div id="fps-box">-- FPS</div>
+  <div id="status-dot" class="loading"></div>
+</div>
+
+<!-- Bottom panel -->
+
+<div id="bottom">
+  <div id="detect-count">OBJECTS DETECTED: 0</div>
+  <div id="detect-list"></div>
+</div>
+
+<!-- Splash -->
+
+<div id="splash">
+  <div class="title">VISION</div>
+  <div class="sub">OBJECT DETECTION SYSTEM</div>
+  <div class="progress-wrap"><div id="splash-bar"></div></div>
+  <div id="splash-msg">LOADING MODEL...</div>
+  <button id="start-btn">▶ START CAMERA</button>
+</div>
+
+<!-- Permission -->
+
+<div id="perm-screen">
+  <div class="icon">📷</div>
+  <p>カメラへのアクセスが必要です<br>次の画面で「許可」を選択してください</p>
+  <button id="perm-btn">GRANT ACCESS</button>
+</div>
+
+<script>
+(function(){
+  // ── State ──
+  let model = null;
+  let stream = null;
+  let animId = null;
+  let facingMode = "environment";
+  let running = false;
+  let lastTime = 0;
+  let fpsArr = [];
+
+  const video   = document.getElementById("video");
+  const canvas  = document.getElementById("canvas");
+  const ctx     = canvas.getContext("2d");
+  const splash  = document.getElementById("splash");
+  const splashBar = document.getElementById("splash-bar");
+  const splashMsg = document.getElementById("splash-msg");
+  const startBtn  = document.getElementById("start-btn");
+  const permScreen = document.getElementById("perm-screen");
+  const permBtn   = document.getElementById("perm-btn");
+  const fpsBox    = document.getElementById("fps-box");
+  const statusDot = document.getElementById("status-dot");
+  const detectCount = document.getElementById("detect-count");
+  const detectList  = document.getElementById("detect-list");
+  const camToggle   = document.getElementById("cam-toggle");
+
+  // ── Color palette per class ──
+  const CLASS_COLORS = {};
+  const PALETTE = [
+    "#00ff41","#00e5ff","#ff3a3a","#ffb800","#bf00ff","#ff6b35",
+    "#00ff9f","#ff0090","#7dff4f","#ff4fd8",
+  ];
+  let colorIdx = 0;
+  function colorFor(cls) {
+    if (!CLASS_COLORS[cls]) {
+      CLASS_COLORS[cls] = PALETTE[colorIdx++ % PALETTE.length];
+    }
+    return CLASS_COLORS[cls];
+  }
+
+  // ── Load model ──
+  async function loadModel() {
+    splashBar.style.width = "10%";
+    splashMsg.textContent = "LOADING TENSORFLOW...";
+    await tf.ready();
+    splashBar.style.width = "35%";
+    splashMsg.textContent = "LOADING COCO-SSD MODEL...";
+    model = await cocoSsd.load({ base: "mobilenet_v2" });
+    splashBar.style.width = "80%";
+    splashMsg.textContent = "MODEL READY — 80 CLASSES";
+    await new Promise(r => setTimeout(r, 400));
+    splashBar.style.width = "100%";
+    await new Promise(r => setTimeout(r, 200));
+    splashMsg.textContent = "INITIALIZING...";
+    startBtn.classList.add("visible");
+    splashMsg.textContent = "TAP TO START";
+  }
+
+  // ── Camera ──
+  async function startCamera() {
+    if (stream) {
+      stream.getTracks().forEach(t => t.stop());
+      stream = null;
+    }
+    const constraints = {
+      video: {
+        facingMode: { ideal: facingMode },
+        width:  { ideal: 1280 },
+        height: { ideal: 720 },
+      },
+      audio: false,
+    };
+    stream = await navigator.mediaDevices.getUserMedia(constraints);
+    video.srcObject = stream;
+    await new Promise(r => { video.onloadedmetadata = r; });
+    video.play();
+    resizeCanvas();
+    video.classList.add("ready");
+  }
+
+  function resizeCanvas() {
+    canvas.width  = video.videoWidth  || window.innerWidth;
+    canvas.height = video.videoHeight || window.innerHeight;
+    canvas.style.width  = "100%";
+    canvas.style.height = "100%";
+  }
+
+  // ── Detection loop ──
+  async function detect() {
+    if (!model || !running) return;
+
+    const now = performance.now();
+    const dt = now - lastTime;
+    lastTime = now;
+    if (dt > 0) {
+      fpsArr.push(1000 / dt);
+      if (fpsArr.length > 10) fpsArr.shift();
+      const avg = fpsArr.reduce((a,b)=>a+b,0) / fpsArr.length;
+      fpsBox.textContent = avg.toFixed(0) + " FPS";
+    }
+
+    let predictions = [];
+    try {
+      predictions = await model.detect(video, 10, 0.40);
+    } catch(e) {}
+
+    drawFrame(predictions);
+    updateList(predictions);
+
+    animId = requestAnimationFrame(detect);
+  }
+
+  // ── Draw ──
+  function drawFrame(preds) {
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    if (!vw || !vh) return;
+
+    if (canvas.width !== vw || canvas.height !== vh) {
+      canvas.width = vw; canvas.height = vh;
+    }
+
+    ctx.clearRect(0, 0, vw, vh);
+
+    preds.forEach(p => {
+      const [x, y, w, h] = p.bbox;
+      const conf = (p.score * 100).toFixed(0);
+      const col  = colorFor(p.class);
+      const arm  = Math.min(w, h) * 0.22;
+
+      // Glow fill
+      ctx.fillStyle = col + "18";
+      ctx.fillRect(x, y, w, h);
+
+      // Bracket corners
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 2.5;
+      ctx.shadowColor = col;
+      ctx.shadowBlur = 8;
+      ctx.lineCap = "square";
+
+      const brackets = [
+        // TL
+        [[x,y+arm],[x,y],[x+arm,y]],
+        // TR
+        [[x+w-arm,y],[x+w,y],[x+w,y+arm]],
+        // BL
+        [[x,y+h-arm],[x,y+h],[x+arm,y+h]],
+        // BR
+        [[x+w-arm,y+h],[x+w,y+h],[x+w,y+h-arm]],
+      ];
+      brackets.forEach(pts => {
+        ctx.beginPath();
+        ctx.moveTo(pts[0][0], pts[0][1]);
+        ctx.lineTo(pts[1][0], pts[1][1]);
+        ctx.lineTo(pts[2][0], pts[2][1]);
+        ctx.stroke();
+      });
+      ctx.shadowBlur = 0;
+
+      // Label background
+      const label = p.class.toUpperCase() + "  " + conf + "%";
+      ctx.font = "bold " + Math.max(11, Math.min(14, w/8)) + "px 'Courier New', monospace";
+      const tw = ctx.measureText(label).width;
+      const th = 18;
+      const lx = x;
+      const ly = y > th + 4 ? y - th - 4 : y + 4;
+
+      ctx.fillStyle = col;
+      ctx.fillRect(lx, ly, tw + 12, th);
+
+      ctx.fillStyle = "#050a05";
+      ctx.shadowBlur = 0;
+      ctx.fillText(label, lx + 6, ly + th - 4);
+    });
+  }
+
+  function updateList(preds) {
+    const count = preds.length;
+    detectCount.textContent = "OBJECTS DETECTED: " + count;
+
+    // Build tag list
+    const seen = {};
+    preds.forEach(p => {
+      seen[p.class] = (seen[p.class] || 0) + 1;
+    });
+    detectList.innerHTML = "";
+    Object.entries(seen).forEach(([cls, n]) => {
+      const col = colorFor(cls);
+      const tag = document.createElement("div");
+      tag.className = "det-tag";
+      tag.style.borderColor = col;
+      tag.style.color = col;
+      tag.style.background = col + "18";
+      tag.textContent = cls.toUpperCase() + (n > 1 ? " ×" + n : "");
+      detectList.appendChild(tag);
+    });
+  }
+
+  // ── Camera toggle ──
+  camToggle.addEventListener("click", async () => {
+    facingMode = facingMode === "environment" ? "user" : "environment";
+    if (running) {
+      if (animId) cancelAnimationFrame(animId);
+      await startCamera();
+      lastTime = 0; fpsArr = [];
+      animId = requestAnimationFrame(detect);
+    }
+  });
+
+  // ── Start flow ──
+  startBtn.addEventListener("click", async () => {
+    splash.style.display = "none";
+    statusDot.classList.remove("loading");
+
+    // Check camera API
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      permScreen.querySelector("p").textContent =
+        "このブラウザはカメラAPIに対応していません。\nSafari 14以上でご利用ください。";
+      permScreen.classList.add("show");
+      return;
+    }
+
+    // Permission prompt
+    permScreen.classList.add("show");
+  });
+
+  permBtn.addEventListener("click", async () => {
+    permScreen.classList.remove("show");
+    try {
+      await startCamera();
+      running = true;
+      statusDot.classList.remove("loading");
+      lastTime = performance.now();
+      animId = requestAnimationFrame(detect);
+    } catch(err) {
+      statusDot.classList.add("error");
+      permScreen.querySelector("p").textContent =
+        "カメラへのアクセスが拒否されました。\nSafari設定 → プライバシー → カメラ を確認してください。";
+      permScreen.classList.add("show");
+    }
+  });
+
+  window.addEventListener("resize", resizeCanvas);
+
+  // ── Service Worker ──
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  }
+
+  // ── Start ──
+  loadModel().catch(err => {
+    splashMsg.textContent = "MODEL LOAD FAILED";
+    statusDot.classList.add("error");
+    console.error(err);
+  });
+
+})();
+</script>
+
+</body>
+</html>
