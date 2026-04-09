@@ -1,0 +1,16 @@
+{
+  "name": "HAND — 手の骨格検出",
+  "short_name": "HAND",
+  "description": "21点手骨格・ジェスチャー認識PWA",
+  "start_url": "/handpose/",
+  "scope": "/handpose/",
+  "id": "/handpose/",
+  "display": "standalone",
+  "background_color": "#080c14",
+  "theme_color": "#080c14",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
