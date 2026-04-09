@@ -1,5 +1,5 @@
 const CACHE = "vision-v1";
-const ASSETS = ["/detect/", "/detect/index.html", "/detect/manifest.json"];
+const ASSETS = ["/TensorFlowjs-test/detect/", "/TensorFlowjs-test/detect/index.html", "/TensorFlowjs-test/detect/manifest.json"];
 
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
