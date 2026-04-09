@@ -1,5 +1,5 @@
 const CACHE = "hand-v2";
-const ASSETS = ["./", "./index.html", "./manifest.json"];
+const ASSETS = ["/TensorFlowjs-test/handpose/","/TensorFlowjs-test/handpose/index.html", "/TensorFlowjs-test/handpose/manifest.json"];
  
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
