@@ -333,6 +333,7 @@
     return angle3(a,wrist,b);
   }
   function lineAngle(a,b){
+    if(!a||!b||isNaN(a.x)||isNaN(b.x)) return null;
     return Math.round(Math.atan2(b.y-a.y,b.x-a.x)*180/Math.PI);
   }
 
@@ -417,11 +418,37 @@
     });
     video.srcObject=stream;
     await new Promise(r=>{video.onloadedmetadata=r;});
-    video.play(); resizeCanvas(); video.classList.add('ready');
+    video.play();
+    // iOS Safari: videoWidthがmetadata後も0のことがあるため実サイズを待つ
+    await new Promise(r=>{
+      const check=()=>{ if(video.videoWidth>0){ r(); } else { requestAnimationFrame(check); }};
+      check();
+    });
+    resizeCanvas();
+    video.classList.add('ready');
   }
   function resizeCanvas(){
-    canvas.width=video.videoWidth||window.innerWidth;
-    canvas.height=video.videoHeight||window.innerHeight;
+    // Canvasを画面サイズに合わせる（videoサイズではなく）
+    canvas.width  = window.innerWidth;
+    canvas.height = window.innerHeight;
+  }
+
+  // object-fit:cover と同じ変換でキーポイントを画面座標へ変換
+  function toScreen(kps){
+    const vw = video.videoWidth  || 1;
+    const vh = video.videoHeight || 1;
+    const dw = canvas.width;
+    const dh = canvas.height;
+    // cover: 短辺を埋めるスケール
+    const scale = Math.max(dw / vw, dh / vh);
+    const ox = (dw - vw * scale) / 2;
+    const oy = (dh - vh * scale) / 2;
+    return kps.map(p => ({
+      x: p.x * scale + ox,
+      y: p.y * scale + oy,
+      score: p.score,
+      name: p.name
+    }));
   }
 
   // ── Detection loop ──
@@ -448,17 +475,17 @@
 
   // ── Draw ──
   function draw(hands){
-    const vw=video.videoWidth,vh=video.videoHeight;
-    if(!vw||!vh) return;
-    if(canvas.width!==vw||canvas.height!==vh) resizeCanvas();
-    ctx.clearRect(0,0,vw,vh);
+    const vw = video.videoWidth, vh = video.videoHeight;
+    // Canvasサイズを画面に合わせて更新
+    if(canvas.width !== window.innerWidth || canvas.height !== window.innerHeight) resizeCanvas();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     const gWrap  = document.getElementById('gesture-wrap');
     const gWrap2 = document.getElementById('gesture-wrap2');
     const fPanel = document.getElementById('finger-panel');
     const bottom = document.getElementById('bottom');
 
-    if(!hands.length){
+    if(!hands.length || !vw || !vh){
       gWrap.classList.remove('show'); gWrap2.classList.remove('show');
       fPanel.classList.remove('show'); bottom.classList.remove('show');
       return;
@@ -469,13 +496,14 @@
     bottom.classList.add('show');
 
     hands.forEach((hand, hi) => {
-      // MediaPipe Hands: keypoints[i].score は未定義の場合があるため 1.0 を補完
-      const kps = hand.keypoints.map(p => ({
+      // scoreを補完しつつ、object-fit:cover座標変換を適用
+      const rawKps = hand.keypoints.map(p => ({
         x: p.x, y: p.y,
         score: (p.score !== undefined && p.score !== null) ? p.score : 1.0,
         name: p.name
       }));
-      const handedness = hand.handedness || (hi===0?'Right':'Left'); // 左右判定
+      const kps = toScreen(rawKps); // 画面座標へ変換
+      const handedness = hand.handedness || (hi===0?'Right':'Left');
 
       // ── Draw connections ──
       ctx.lineCap='round';
