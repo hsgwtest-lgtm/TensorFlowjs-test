@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+  <title>POSE — 骨格検出</title>
+
+  <link rel="manifest" href="manifest.json"/>
+  <meta name="theme-color" content="#0a0a0f"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black"/>
+  <meta name="apple-mobile-web-app-title" content="POSE"/>
+  <link rel="apple-touch-icon" href="icon-192.png"/>
+
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.10.0/dist/tf-core.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.10.0/dist/tf-backend-webgl.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4.10.0/dist/tf-converter.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.min.js"></script>
+
+  <style>
+    :root {
+      --bg:    #0a0a0f;
+      --arm:   #4a9eff;
+      --torso: #ff8c00;
+      --leg:   #00e676;
+      --face:  #e0e0e0;
+      --safe-t: env(safe-area-inset-top, 0px);
+      --safe-b: env(safe-area-inset-bottom, 0px);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    html, body { width:100%; height:100dvh; overflow:hidden; background:var(--bg);
+      font-family:'Helvetica Neue','Hiragino Sans',sans-serif; }
+
+    #video { position:fixed; inset:0; width:100%; height:100%; object-fit:cover; opacity:0; transition:opacity .5s; }
+    #video.ready { opacity:1; }
+    #canvas { position:fixed; inset:0; width:100%; height:100%; pointer-events:none; z-index:5; }
+
+    /* Top bar */
+    #topbar {
+      position:fixed; top:0; left:0; right:0; z-index:20;
+      padding:calc(var(--safe-t) + 6px) 14px 6px;
+      display:flex; align-items:center; gap:8px;
+      background:linear-gradient(rgba(10,10,15,0.8),transparent);
+    }
+    .logo { font-size:15px; font-weight:700; letter-spacing:4px; color:#fff; }
+    .spacer { flex:1; }
+    #cam-btn {
+      background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.2);
+      color:#fff; font-size:16px; padding:4px 10px; cursor:pointer; border-radius:6px; line-height:1;
+    }
+    #fps-box {
+      font-size:11px; color:rgba(255,255,255,0.6); padding:3px 8px;
+      border:1px solid rgba(255,255,255,0.15); border-radius:4px;
+      font-family:'Courier New',monospace; letter-spacing:1px;
+    }
+    #status-dot { width:8px; height:8px; border-radius:50%; background:#00e676; box-shadow:0 0 6px #00e676; animation:blink 1.5s infinite; }
+    #status-dot.loading { background:#ffb800; box-shadow:0 0 6px #ffb800; }
+    #status-dot.error   { background:#ff3a3a; box-shadow:0 0 6px #ff3a3a; animation:none; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    /* Score hex */
+    #score-panel { position:fixed; top:calc(var(--safe-t)+52px); left:12px; z-index:20; display:none; }
+    #score-panel.show { display:block; }
+    #score-hex {
+      width:80px; height:72px; background:rgba(0,188,212,0.2);
+      border:1.5px solid rgba(0,188,212,0.7);
+      clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);
+      display:flex; flex-direction:column; align-items:center; justify-content:center;
+    }
+    #score-val { font-size:22px; font-weight:700; color:#fff; line-height:1; }
+    #score-label { font-size:9px; color:rgba(0,188,212,0.9); letter-spacing:1px; margin-top:2px; }
+
+    /* Right info panel */
+    #info-panel { position:fixed; top:50%; right:10px; z-index:20; transform:translateY(-50%);
+      display:none; flex-direction:column; gap:5px; }
+    #info-panel.show { display:flex; }
+    .info-row {
+      background:rgba(10,10,15,0.72); border:1px solid rgba(255,255,255,0.15);
+      border-radius:6px; padding:4px 8px; font-size:11px;
+      color:rgba(255,255,255,0.7); letter-spacing:.5px; white-space:nowrap; text-align:right;
+    }
+    .info-row span { color:#fff; font-weight:700; }
+
+    /* Bottom */
+    #bottom { position:fixed; bottom:0; left:0; right:0; z-index:20;
+      padding:8px 14px calc(var(--safe-b)+10px);
+      background:linear-gradient(transparent,rgba(10,10,15,0.85));
+      display:none; flex-direction:column; gap:4px; }
+    #bottom.show { display:flex; }
+    .brow { font-size:11px; color:rgba(255,255,255,0.55); letter-spacing:1px; text-align:center; }
+    .brow span { font-weight:700; }
+
+    /* Crosshair */
+    #crosshair { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); pointer-events:none; z-index:6; }
+    .ch-h { position:absolute; top:50%; left:-14px; right:-14px; height:1.5px; transform:translateY(-50%); background:rgba(255,255,255,0.5); }
+    .ch-v { position:absolute; left:50%; top:-14px; bottom:-14px; width:1.5px; transform:translateX(-50%); background:rgba(255,255,255,0.5); }
+
+    /* Splash */
+    #splash { position:fixed; inset:0; z-index:100; background:var(--bg);
+      display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px; padding:40px; }
+    #splash h1 { font-size:28px; letter-spacing:8px; color:#fff; font-weight:300; }
+    #splash p  { font-size:12px; letter-spacing:2px; color:rgba(255,255,255,0.4); text-align:center; line-height:1.8; }
+    #prog-wrap { width:200px; height:2px; background:rgba(255,255,255,0.1); }
+    #prog-bar  { height:100%; width:0%; background:#00bcd4; transition:width .3s; }
+    #splash-msg { font-size:11px; color:rgba(255,255,255,0.45); letter-spacing:2px; }
+    #start-btn { display:none; padding:12px 36px; border:1px solid rgba(255,255,255,0.3);
+      background:rgba(255,255,255,0.06); color:#fff; font-size:13px; letter-spacing:4px;
+      cursor:pointer; border-radius:4px; font-family:inherit; }
+    #start-btn.show { display:block; }
+
+    /* Perm */
+    #perm { display:none; position:fixed; inset:0; z-index:101; background:var(--bg);
+      flex-direction:column; align-items:center; justify-content:center; gap:22px; padding:40px; text-align:center; }
+    #perm.show { display:flex; }
+    #perm .icon { font-size:50px; }
+    #perm p { font-size:13px; color:rgba(255,255,255,0.6); line-height:1.8; }
+    #perm-btn { padding:13px 38px; border:1px solid rgba(255,255,255,0.3);
+      background:rgba(255,255,255,0.08); color:#fff; font-family:inherit;
+      font-size:13px; letter-spacing:3px; cursor:pointer; border-radius:4px; }
+  </style>
+</head>
+<body>
+
+<video id="video" autoplay playsinline muted webkit-playsinline></video>
+<canvas id="canvas"></canvas>
+
+<div id="crosshair"><div class="ch-h"></div><div class="ch-v"></div></div>
+
+<div id="topbar">
+  <div class="logo">POSE</div>
+  <div class="spacer"></div>
+  <button id="cam-btn">⟳</button>
+  <div id="fps-box">-- FPS</div>
+  <div id="status-dot" class="loading"></div>
+</div>
+
+<div id="score-panel">
+  <div id="score-hex">
+    <div id="score-val">--</div>
+    <div id="score-label">姿勢スコア</div>
+  </div>
+</div>
+
+<div id="info-panel">
+  <div class="info-row">左肘 <span id="v-le">--°</span></div>
+  <div class="info-row">右肘 <span id="v-re">--°</span></div>
+  <div class="info-row">左肩 <span id="v-ls">--°</span></div>
+  <div class="info-row">右肩 <span id="v-rs">--°</span></div>
+  <div class="info-row">左腰 <span id="v-lh">--°</span></div>
+  <div class="info-row">右腰 <span id="v-rh">--°</span></div>
+  <div class="info-row">左膝 <span id="v-lk">--°</span></div>
+  <div class="info-row">右膝 <span id="v-rk">--°</span></div>
+</div>
+
+<div id="bottom">
+  <div class="brow">肩ライン <span id="v-sl" style="color:#ff6060">--°</span></div>
+  <div class="brow">腰ライン <span id="v-hl" style="color:#00e676">--°</span></div>
+  <div class="brow">体幹傾き <span id="v-tl" style="color:#ff8c00">--°</span></div>
+</div>
+
+<div id="splash">
+  <h1>POSE</h1>
+  <p>全身骨格検出 · 17点 · リアルタイム<br>MoveNet Thunder</p>
+  <div id="prog-wrap"><div id="prog-bar"></div></div>
+  <div id="splash-msg">モデルを読み込み中…</div>
+  <button id="start-btn">▶ カメラ起動</button>
+</div>
+
+<div id="perm">
+  <div class="icon">📷</div>
+  <p>カメラへのアクセスが必要です<br>次の画面で「許可」を選択してください</p>
+  <button id="perm-btn">アクセスを許可</button>
+</div>
+
+<script>
+(function(){
+  /* MoveNet 17 keypoints:
+     0=nose 1=L-eye 2=R-eye 3=L-ear 4=R-ear
+     5=L-shoulder 6=R-shoulder 7=L-elbow 8=R-elbow
+     9=L-wrist 10=R-wrist 11=L-hip 12=R-hip
+     13=L-knee 14=R-knee 15=L-ankle 16=R-ankle */
+
+  const CONF = 0.25;
+
+  const SEGS = [
+    [0,1,'#c8c8c8'],[0,2,'#c8c8c8'],[1,3,'#c8c8c8'],[2,4,'#c8c8c8'],  // face
+    [5,6,'#ff8c00'],[5,11,'#ff8c00'],[6,12,'#ff8c00'],[11,12,'#ff8c00'], // torso
+    [5,7,'#4a9eff'],[7,9,'#4a9eff'],[6,8,'#4a9eff'],[8,10,'#4a9eff'],   // arms
+    [11,13,'#00e676'],[13,15,'#00e676'],[12,14,'#00e676'],[14,16,'#00e676'], // legs
+  ];
+
+  function angle3(a, m, b) {
+    if (!a||!m||!b) return null;
+    const ax=a.x-m.x, ay=a.y-m.y, bx=b.x-m.x, by=b.y-m.y;
+    const la=Math.sqrt(ax*ax+ay*ay), lb=Math.sqrt(bx*bx+by*by);
+    if(!la||!lb) return null;
+    return Math.round(Math.acos(Math.max(-1,Math.min(1,(ax*bx+ay*by)/(la*lb))))*180/Math.PI);
+  }
+  function lineAngleDeg(a, b) {
+    if(!a||!b) return null;
+    return Math.round(Math.atan2(b.y-a.y, b.x-a.x)*180/Math.PI);
+  }
+  function kp(pts, i) { const p=pts[i]; return(p&&p.score>=CONF)?p:null; }
+
+  let detector=null, stream=null, animId=null, running=false;
+  let facingMode='environment', lastTime=0, fpsArr=[];
+
+  const video=document.getElementById('video');
+  const canvas=document.getElementById('canvas');
+  const ctx=canvas.getContext('2d');
+
+  async function loadModel(){
+    const bar=document.getElementById('prog-bar');
+    const msg=document.getElementById('splash-msg');
+    bar.style.width='10%'; msg.textContent='TensorFlow初期化中…';
+    await tf.setBackend('webgl'); await tf.ready();
+    bar.style.width='40%'; msg.textContent='MoveNet Thunderを読み込み中…';
+    detector=await poseDetection.createDetector(
+      poseDetection.SupportedModels.MoveNet,
+      {modelType:poseDetection.movenet.modelType.SINGLEPOSE_THUNDER}
+    );
+    bar.style.width='90%'; msg.textContent='準備完了 — 17点骨格';
+    await new Promise(r=>setTimeout(r,400));
+    bar.style.width='100%';
+    await new Promise(r=>setTimeout(r,150));
+    document.getElementById('start-btn').classList.add('show');
+    msg.textContent='タップして開始';
+  }
+
+  async function startCamera(){
+    if(stream) stream.getTracks().forEach(t=>t.stop());
+    stream=await navigator.mediaDevices.getUserMedia({
+      video:{facingMode:{ideal:facingMode},width:{ideal:1280},height:{ideal:720}},audio:false
+    });
+    video.srcObject=stream;
+    await new Promise(r=>{video.onloadedmetadata=r;});
+    video.play(); resizeCanvas(); video.classList.add('ready');
+  }
+
+  function resizeCanvas(){
+    canvas.width=video.videoWidth||window.innerWidth;
+    canvas.height=video.videoHeight||window.innerHeight;
+  }
+
+  async function loop(){
+    if(!running) return;
+    const now=performance.now(), dt=now-lastTime; lastTime=now;
+    if(dt>0){
+      fpsArr.push(1000/dt); if(fpsArr.length>8) fpsArr.shift();
+      document.getElementById('fps-box').textContent=
+        Math.round(fpsArr.reduce((a,b)=>a+b)/fpsArr.length)+' FPS';
+    }
+    let poses=[];
+    try{ poses=await detector.estimatePoses(video,{flipHorizontal:facingMode==='user'}); }catch(e){}
+    draw(poses);
+    animId=requestAnimationFrame(loop);
+  }
+
+  function draw(poses){
+    const vw=video.videoWidth, vh=video.videoHeight;
+    if(!vw||!vh) return;
+    if(canvas.width!==vw||canvas.height!==vh) resizeCanvas();
+    ctx.clearRect(0,0,vw,vh);
+
+    const scorePanel=document.getElementById('score-panel');
+    const infoPanel=document.getElementById('info-panel');
+    const bottomBar=document.getElementById('bottom');
+
+    if(!poses.length){
+      scorePanel.classList.remove('show');
+      infoPanel.classList.remove('show');
+      bottomBar.classList.remove('show');
+      return;
+    }
+
+    const raw=poses[0].keypoints;
+    // map to canvas coords (MoveNet returns normalized or pixel based on version)
+    const kps=raw.map(p=>({x:p.x,y:p.y,score:p.score}));
+
+    // ── Segments ──
+    ctx.lineCap='round';
+    SEGS.forEach(([i,j,col])=>{
+      const a=kps[i],b=kps[j];
+      if(a.score<CONF||b.score<CONF) return;
+      ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y);
+      ctx.strokeStyle=col; ctx.lineWidth=3;
+      ctx.shadowColor=col; ctx.shadowBlur=5; ctx.stroke(); ctx.shadowBlur=0;
+    });
+
+    // ── Joints ──
+    kps.forEach((p,i)=>{
+      if(p.score<CONF) return;
+      const col=i<=4?'#e0e0e0':i===5||i===6||i===11||i===12?'#ff8c00':i<=10?'#4a9eff':'#00e676';
+      ctx.beginPath(); ctx.arc(p.x,p.y,5,0,Math.PI*2);
+      ctx.fillStyle=col; ctx.shadowColor=col; ctx.shadowBlur=8; ctx.fill(); ctx.shadowBlur=0;
+      ctx.beginPath(); ctx.arc(p.x,p.y,5,0,Math.PI*2);
+      ctx.strokeStyle='rgba(255,255,255,0.6)'; ctx.lineWidth=1.5; ctx.stroke();
+    });
+
+    // ── Compute angles ──
+    const K=i=>kp(kps,i);
+    const ang={
+      le: angle3(K(5),K(7),K(9)),
+      re: angle3(K(6),K(8),K(10)),
+      ls: angle3(K(7),K(5),K(11)),
+      rs: angle3(K(8),K(6),K(12)),
+      lh: angle3(K(5),K(11),K(13)),
+      rh: angle3(K(6),K(12),K(14)),
+      lk: angle3(K(11),K(13),K(15)),
+      rk: angle3(K(12),K(14),K(16)),
+    };
+
+    const shoulderAng = (K(5)&&K(6)) ? lineAngleDeg(K(6),K(5)) : null;
+    const hipAng      = (K(11)&&K(12)) ? lineAngleDeg(K(12),K(11)) : null;
+
+    let torsoAng=null;
+    if(K(5)&&K(6)&&K(11)&&K(12)){
+      const msx=(K(5).x+K(6).x)/2, msy=(K(5).y+K(6).y)/2;
+      const mhx=(K(11).x+K(12).x)/2, mhy=(K(11).y+K(12).y)/2;
+      torsoAng=Math.round(Math.atan2(mhx-msx,mhy-msy)*180/Math.PI);
+    }
+
+    // ── Angle labels on canvas ──
+    ctx.font='bold 13px "Helvetica Neue",sans-serif';
+    ctx.textBaseline='middle';
+
+    function label(pt, text, col){
+      if(!pt||text===null) return;
+      const x=pt.x+10, y=pt.y-12;
+      const w=ctx.measureText(text).width+8;
+      ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(x-4,y-9,w,18);
+      ctx.fillStyle=col; ctx.fillText(text,x,y);
+    }
+
+    label(K(7),  ang.le!==null?ang.le+'°':null,    '#4a9eff');
+    label(K(8),  ang.re!==null?ang.re+'°':null,    '#4a9eff');
+    label(K(5),  ang.ls!==null?'肩'+ang.ls+'°':null,'#ff8c00');
+    label(K(6),  ang.rs!==null?'肩'+ang.rs+'°':null,'#ff8c00');
+    label(K(11), ang.lh!==null?ang.lh+'°':null,    '#ff8c00');
+    label(K(12), ang.rh!==null?ang.rh+'°':null,    '#ff8c00');
+    label(K(13), ang.lk!==null?ang.lk+'°':null,    '#00e676');
+    label(K(14), ang.rk!==null?ang.rk+'°':null,    '#00e676');
+
+    // Torso lean label
+    if(K(5)&&K(6)&&torsoAng!==null){
+      const mx=(K(5).x+K(6).x)/2+6, my=(K(5).y+K(6).y)/2+36;
+      const t=torsoAng+'°';
+      const w=ctx.measureText(t).width+8;
+      ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(mx-4,my-9,w,18);
+      ctx.fillStyle='#ff8c00'; ctx.fillText(t,mx,my);
+    }
+
+    // Reference lines
+    function dashLine(a,b,col){
+      if(!a||!b) return;
+      ctx.beginPath(); ctx.setLineDash([6,4]);
+      ctx.moveTo(a.x-20,a.y); ctx.lineTo(b.x+20,b.y);
+      ctx.strokeStyle=col; ctx.lineWidth=1.5; ctx.shadowBlur=0; ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    dashLine(K(6),K(5),'rgba(255,80,80,0.7)');
+    dashLine(K(12),K(11),'rgba(0,230,118,0.6)');
+
+    // ── Score ──
+    let sum=0, cnt=0;
+    if(ang.le!==null&&ang.re!==null){ sum+=Math.max(0,100-Math.abs(ang.le-ang.re)); cnt++; }
+    if(ang.lk!==null&&ang.rk!==null){ sum+=Math.max(0,100-Math.abs(ang.lk-ang.rk)); cnt++; }
+    if(ang.ls!==null&&ang.rs!==null){ sum+=Math.max(0,100-Math.abs(ang.ls-ang.rs)); cnt++; }
+    if(torsoAng!==null){ sum+=Math.max(0,100-Math.abs(torsoAng)*3); cnt++; }
+    const score=cnt?Math.round(sum/cnt):null;
+
+    // ── DOM update ──
+    scorePanel.classList.add('show');
+    infoPanel.classList.add('show');
+    bottomBar.classList.add('show');
+
+    document.getElementById('score-val').textContent=score!==null?score:'--';
+    function sv(id,v){ document.getElementById(id).textContent=v!==null?v+'°':'--°'; }
+    sv('v-le',ang.le); sv('v-re',ang.re);
+    sv('v-ls',ang.ls); sv('v-rs',ang.rs);
+    sv('v-lh',ang.lh); sv('v-rh',ang.rh);
+    sv('v-lk',ang.lk); sv('v-rk',ang.rk);
+    sv('v-sl',shoulderAng); sv('v-hl',hipAng); sv('v-tl',torsoAng);
+  }
+
+  // ── Controls ──
+  document.getElementById('cam-btn').addEventListener('click',async()=>{
+    facingMode=facingMode==='environment'?'user':'environment';
+    if(running){ cancelAnimationFrame(animId); await startCamera(); lastTime=0; fpsArr=[]; animId=requestAnimationFrame(loop); }
+  });
+
+  document.getElementById('start-btn').addEventListener('click',()=>{
+    document.getElementById('splash').style.display='none';
+    document.getElementById('perm').classList.add('show');
+  });
+
+  document.getElementById('perm-btn').addEventListener('click',async()=>{
+    document.getElementById('perm').classList.remove('show');
+    try{
+      await startCamera(); running=true;
+      document.getElementById('status-dot').classList.remove('loading');
+      lastTime=performance.now(); animId=requestAnimationFrame(loop);
+    }catch(e){
+      document.getElementById('status-dot').classList.add('error');
+      document.querySelector('#perm p').textContent='カメラへのアクセスが拒否されました。\nSafari設定 → プライバシー → カメラ を確認してください。';
+      document.getElementById('perm').classList.add('show');
+    }
+  });
+
+  window.addEventListener('resize',resizeCanvas);
+  if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+
+  loadModel().catch(e=>{
+    document.getElementById('splash-msg').textContent='モデルの読み込みに失敗しました';
+    document.getElementById('status-dot').classList.add('error');
+    console.error(e);
+  });
+})();
+</script>
+</body>
+</html>
