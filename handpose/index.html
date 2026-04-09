@@ -612,7 +612,7 @@
    }
  });
  window.addEventListener('resize',resizeCanvas);
- if('serviceWorker' in navigator) navigator.serviceWorker.register('/TensorFlowjs-test/handpose/ sw.js').catch(()=>{});
+ if('serviceWorker' in navigator) navigator.serviceWorker.register('/TensorFlowjs-test/handpose/sw.js').catch(()=>{});
  loadModel().catch(e=>{
    document.getElementById('splash-msg').textContent='モデルの読み込みに失敗しました: '+e.message;
    document.getElementById('status-dot').classList.add('error');
