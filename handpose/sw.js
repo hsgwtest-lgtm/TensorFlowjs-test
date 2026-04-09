@@ -1,4 +1,4 @@
-const CACHE = "hand-v2";
+const CACHE = "hand-v1";
 const ASSETS = ["/TensorFlowjs-test/handpose/", "/TensorFlowjs-test/handpose/index.html", "/TensorFlowjs-test/handpose/manifest.json"];
  
 self.addEventListener("install", e => {
