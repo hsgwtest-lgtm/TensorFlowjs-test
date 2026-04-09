@@ -10,12 +10,20 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black"/>
 <meta name="apple-mobile-web-app-title" content="HAND"/>
 <link rel="apple-touch-icon" href="icon-192.png"/>
-<!-- TF.js (API layer) + MediaPipe Hands WASM runtime -->
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.10.0/dist/tf-core.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.10.0/dist/tf-backend-webgl.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4.10.0/dist/tf-converter.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection@2.0.1/dist/hand-pose-detection.…></script>
+<!-- 診断用: スクリプト読み込み前にエラーハンドリング -->
+<script>
+window.__diag=[];
+window.__dlog=function(s){window.__diag.push(s);var el=document.getElementById('diag');
+if(el){el.textContent=window.__diag.join('\n');el.style.display='block';}};
+window.onerror=function(m,u,l){window.__dlog('ERR:'+m+' @'+u+':'+l);return false;};
+window.addEventListener('unhandledrejection',function(e){window.__dlog('REJECT:'+e.reason);});
+</script>
+<!-- TF.js core + MediaPipe Hands -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.10.0/dist/tf-core.min.js" onerror="window.__dlog('FAIL:tf-core')"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.10.0/dist/tf-backend-webgl.min.js" onerror="window.__dlog('FAIL:tf-backend-webgl')"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4.10.0/dist/tf-converter.min.js" onerror="window.__dlog('FAIL:tf-converter')"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.min.js" onerror="window.__dlog('FAIL:mediapipe-hands')"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection@2.0.1/dist/hand-pose-detection.… onerror="window.__dlog('FAIL:hand-pose-detection')"></script>
 <style>
    :root {
      --bg:    #080c14;
@@ -150,6 +158,13 @@
    #perm-btn { padding:12px 36px; border:1px solid rgba(255,255,255,0.25);
      background:rgba(255,255,255,0.07); color:#fff; font-family:inherit;
      font-size:13px; letter-spacing:3px; cursor:pointer; border-radius:4px; }
+   /* 診断ログ */
+   #diag {
+     display:none; position:fixed; bottom:10px; left:10px; right:10px; z-index:200;
+     background:rgba(0,0,0,0.9); color:#0f0; font-size:10px; font-family:monospace;
+     padding:8px; border-radius:6px; max-height:40vh; overflow-y:auto; white-space:pre-wrap;
+     border:1px solid rgba(0,255,0,0.3);
+   }
 </style>
 </head>
 <body>
@@ -256,6 +271,7 @@
 <p>カメラへのアクセスが必要です<br>次の画面で「許可」を選択してください</p>
 <button id="perm-btn">アクセスを許可</button>
 </div>
+<div id="diag"></div>
 <script>
 (function(){
 /*
@@ -363,18 +379,39 @@
  async function loadModel(){
    const bar=document.getElementById('prog-bar');
    const msg=document.getElementById('splash-msg');
-   bar.style.width='8%'; msg.textContent='MediaPipe初期化中…';
-   bar.style.width='35%'; msg.textContent='MediaPipe Handsを読み込み中…';
-   // ★ mediapipe WASM ランタイムを使用 (tfjs runtime は NaN バグあり)
-   detector=await handPoseDetection.createDetector(
-     handPoseDetection.SupportedModels.MediaPipeHands,
-     {
-       runtime: 'mediapipe',
-       solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240',
-       modelType: 'lite',
-       maxHands: 2
+   window.__dlog('loadModel start');
+   window.__dlog('tf='+(typeof tf)+' hpd='+(typeof handPoseDetection));
+   try {
+     bar.style.width='8%'; msg.textContent='初期化中…';
+     // mediapipe runtime を優先試行 (PCで動作実績あり)
+     window.__dlog('Trying mediapipe runtime...');
+     detector=await handPoseDetection.createDetector(
+       handPoseDetection.SupportedModels.MediaPipeHands,
+       {
+         runtime: 'mediapipe',
+         solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240',
+         modelType: 'lite',
+         maxHands: 2
+       }
+     );
+     window.__dlog('mediapipe runtime OK');
+   } catch(e1) {
+     window.__dlog('mediapipe FAIL: '+e1.message);
+     // フォールバック: tfjs runtime
+     try {
+       window.__dlog('Trying tfjs runtime fallback...');
+       await tf.setBackend('webgl'); await tf.ready();
+       window.__dlog('tf backend: '+tf.getBackend());
+       detector=await handPoseDetection.createDetector(
+         handPoseDetection.SupportedModels.MediaPipeHands,
+         { runtime:'tfjs', modelType:'lite', maxHands:2 }
+       );
+       window.__dlog('tfjs runtime OK (NaNの可能性あり)');
+     } catch(e2) {
+       window.__dlog('tfjs FAIL: '+e2.message);
+       throw e2;
      }
-   );
+   }
    bar.style.width='90%'; msg.textContent='準備完了 — 21点 · 両手';
    await new Promise(r=>setTimeout(r,400));
    bar.style.width='100%';
@@ -475,6 +512,22 @@
      }));
      const kps = toScreen(rawKps); // 画面座標へ変換
      const handedness = hand.handedness || (hi===0?'Right':'Left');
+ 
+     // ★ DEBUG
+     if(hi===0){
+       const r0=rawKps[0], r8=rawKps[8], s0=kps[0], s8=kps[8];
+       const dbg=document.getElementById('debug-bar');
+       dbg.style.display='block';
+       dbg.style.background='rgba(0,100,200,0.85)';
+       dbg.textContent=
+         'RAW[0]:('+JSON.stringify(r0.x)+','+JSON.stringify(r0.y)+') '+
+         'RAW[8]:('+JSON.stringify(r8.x)+','+JSON.stringify(r8.y)+') '+
+         'SCR[0]:('+JSON.stringify(s0.x)+','+JSON.stringify(s0.y)+') '+
+         'canvas:'+canvas.width+'x'+canvas.height+' video:'+vw+'x'+vh+
+         ' score:'+JSON.stringify(hand.score)+
+         ' keys:'+Object.keys(hand.keypoints[0]).join(',')+
+         ' tfbackend:'+(typeof tf!=='undefined'?tf.getBackend():'N/A');
+     }
  
      // ── Draw connections ──
      ctx.lineCap='round';
@@ -614,9 +667,9 @@
  window.addEventListener('resize',resizeCanvas);
  if('serviceWorker' in navigator) navigator.serviceWorker.register('/TensorFlowjs-test/handpose/sw.js').catch(()=>{});
  loadModel().catch(e=>{
-   document.getElementById('splash-msg').textContent='モデルの読み込みに失敗しました: '+e.message;
+   window.__dlog('loadModel FATAL: '+e.message);
+   document.getElementById('splash-msg').textContent='モデルの読み込みに失敗: '+e.message;
    document.getElementById('status-dot').classList.add('error');
-   // スプラッシュにエラー詳細を表示してスタートボタンは出さない
    console.error('HandPose model error:', e);
  });
 })();
