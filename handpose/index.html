@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+  <title>LEARN — 転移学習</title>
+
+  <link rel="manifest" href="manifest.json"/>
+  <meta name="theme-color" content="#0a0a0f"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black"/>
+  <meta name="apple-mobile-web-app-title" content="LEARN"/>
+  <link rel="apple-touch-icon" href="icon-192.png"/>
+
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.0/dist/mobilenet.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/knn-classifier@1.2.4/dist/knn-classifier.min.js"></script>
+
+  <style>
+    :root {
+      --bg: #0a0a0f;
+      --c1: #ff6b6b; --c2: #4a9eff; --c3: #00e676; --c4: #ffa500; --c5: #e040fb;
+      --safe-t: env(safe-area-inset-top, 0px);
+      --safe-b: env(safe-area-inset-bottom, 0px);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      width: 100%; height: 100dvh; overflow: hidden; background: var(--bg);
+      font-family: 'Helvetica Neue', 'Hiragino Sans', sans-serif;
+      user-select: none; -webkit-user-select: none;
+    }
+
+    #video {
+      position: fixed; inset: 0; width: 100%; height: 100%;
+      object-fit: cover; opacity: 0; transition: opacity .5s;
+    }
+    #video.ready { opacity: 1; }
+
+    /* ── Top bar ── */
+    #topbar {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 20;
+      padding: calc(var(--safe-t) + 6px) 14px 6px;
+      display: flex; align-items: center; gap: 8px;
+      background: linear-gradient(rgba(10,10,15,.85), transparent);
+    }
+    .logo { font-size: 15px; font-weight: 700; letter-spacing: 4px; color: #fff; }
+    .spacer { flex: 1; }
+    #cam-btn, #reset-btn {
+      background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2);
+      color: #fff; font-size: 14px; padding: 4px 10px; cursor: pointer;
+      border-radius: 6px; line-height: 1; font-family: inherit;
+    }
+    #reset-btn { font-size: 11px; letter-spacing: 1px; }
+    #fps-box {
+      font-size: 11px; color: rgba(255,255,255,.6); padding: 3px 8px;
+      border: 1px solid rgba(255,255,255,.15); border-radius: 4px;
+      font-family: 'Courier New', monospace; letter-spacing: 1px;
+    }
+    #status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #00e676; box-shadow: 0 0 6px #00e676; animation: blink 1.5s infinite;
+    }
+    #status-dot.loading { background: #ffb800; box-shadow: 0 0 6px #ffb800; }
+    #status-dot.error   { background: #ff3a3a; box-shadow: 0 0 6px #ff3a3a; animation: none; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    /* ── Prediction panel ── */
+    #pred-panel {
+      position: fixed; top: calc(var(--safe-t) + 52px); left: 12px; right: 12px;
+      z-index: 20; display: none;
+      background: rgba(0,0,0,.6); border: 1.5px solid rgba(255,255,255,.2);
+      border-radius: 16px; padding: 14px 18px;
+    }
+    #pred-panel.show { display: block; }
+    #pred-label {
+      font-size: 28px; font-weight: 700; color: #fff;
+      text-align: center; line-height: 1.2;
+    }
+    #pred-conf {
+      font-size: 12px; color: rgba(255,255,255,.5); text-align: center;
+      margin-top: 4px; letter-spacing: 1px;
+    }
+    #pred-bars { margin-top: 10px; display: flex; flex-direction: column; gap: 5px; }
+    .pred-bar-row {
+      display: flex; align-items: center; gap: 8px; font-size: 11px;
+      color: rgba(255,255,255,.7);
+    }
+    .pred-bar-name { width: 50px; text-align: right; flex-shrink: 0; font-weight: 600; }
+    .pred-bar-bg {
+      flex: 1; height: 6px; background: rgba(255,255,255,.1); border-radius: 3px;
+      overflow: hidden;
+    }
+    .pred-bar-fill { height: 100%; border-radius: 3px; transition: width .15s; }
+    .pred-bar-pct { width: 36px; font-family: 'Courier New', monospace; font-size: 10px; }
+
+    /* ── Class buttons (bottom) ── */
+    #class-bar {
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 20;
+      padding: 6px 8px calc(var(--safe-b) + 8px);
+      background: linear-gradient(transparent, rgba(10,10,15,.92));
+      display: none; flex-direction: column; gap: 8px;
+    }
+    #class-bar.show { display: flex; }
+
+    #class-btns {
+      display: flex; gap: 7px; justify-content: center; flex-wrap: wrap;
+    }
+    .cls-btn {
+      flex: 0 0 auto; min-width: 80px;
+      background: rgba(255,255,255,.07); border: 1.5px solid rgba(255,255,255,.15);
+      color: #fff; border-radius: 14px; padding: 10px 14px;
+      cursor: pointer; font-family: inherit; text-align: center;
+      transition: all .15s; font-size: 11px; letter-spacing: .5px;
+    }
+    .cls-btn:active { transform: scale(.95); }
+    .cls-btn .cls-emoji { font-size: 24px; display: block; }
+    .cls-btn .cls-name  { font-size: 10px; margin-top: 2px; }
+    .cls-btn .cls-count { font-size: 9px; color: rgba(255,255,255,.4); margin-top: 1px; }
+    .cls-btn.recording { border-color: rgba(255,80,80,.8); background: rgba(255,80,80,.12); }
+
+    #class-hint {
+      font-size: 10px; color: rgba(255,255,255,.35); text-align: center;
+      letter-spacing: 1px;
+    }
+
+    /* ── Edit overlay ── */
+    #edit-overlay {
+      display: none; position: fixed; inset: 0; z-index: 50;
+      background: rgba(0,0,0,.8); flex-direction: column;
+      align-items: center; justify-content: center; gap: 16px; padding: 40px;
+    }
+    #edit-overlay.show { display: flex; }
+    #edit-overlay h3 {
+      color: #fff; font-size: 16px; font-weight: 400; letter-spacing: 2px;
+    }
+    #edit-input {
+      width: 200px; padding: 10px 14px; border: 1px solid rgba(255,255,255,.3);
+      background: rgba(255,255,255,.08); color: #fff; font-size: 16px;
+      border-radius: 8px; outline: none; font-family: inherit; text-align: center;
+    }
+    #edit-input:focus { border-color: rgba(0,188,212,.7); }
+    #edit-ok {
+      padding: 10px 32px; border: 1px solid rgba(255,255,255,.3);
+      background: rgba(0,188,212,.2); color: #fff; font-family: inherit;
+      font-size: 13px; letter-spacing: 2px; cursor: pointer; border-radius: 6px;
+    }
+
+    /* ── mode toggle ── */
+    #mode-toggle {
+      display: flex; justify-content: center; gap: 0;
+      background: rgba(255,255,255,.08); border-radius: 8px; overflow: hidden;
+      border: 1px solid rgba(255,255,255,.12);
+    }
+    .mode-opt {
+      padding: 7px 18px; font-size: 11px; color: rgba(255,255,255,.5);
+      cursor: pointer; letter-spacing: 1px; border: none; background: transparent;
+      font-family: inherit; transition: all .15s;
+    }
+    .mode-opt.active {
+      background: rgba(0,188,212,.22); color: #fff;
+    }
+
+    /* ── Splash ── */
+    #splash {
+      position: fixed; inset: 0; z-index: 100; background: var(--bg);
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 18px; padding: 40px;
+    }
+    #splash h1 { font-size: 28px; letter-spacing: 8px; color: #fff; font-weight: 300; }
+    #splash p  {
+      font-size: 12px; letter-spacing: 2px; color: rgba(255,255,255,.4);
+      text-align: center; line-height: 1.9;
+    }
+    #prog-wrap { width: 200px; height: 2px; background: rgba(255,255,255,.1); }
+    #prog-bar  { height: 100%; width: 0%; background: #00bcd4; transition: width .3s; }
+    #splash-msg { font-size: 11px; color: rgba(255,255,255,.45); letter-spacing: 2px; }
+    #start-btn {
+      display: none; padding: 12px 36px;
+      border: 1px solid rgba(255,255,255,.3); background: rgba(255,255,255,.06);
+      color: #fff; font-size: 13px; letter-spacing: 4px;
+      cursor: pointer; border-radius: 4px; font-family: inherit;
+    }
+    #start-btn.show { display: block; }
+
+    /* ── Permission ── */
+    #perm {
+      display: none; position: fixed; inset: 0; z-index: 101; background: var(--bg);
+      flex-direction: column; align-items: center; justify-content: center;
+      gap: 22px; padding: 40px; text-align: center;
+    }
+    #perm.show { display: flex; }
+    #perm .icon { font-size: 50px; }
+    #perm p { font-size: 13px; color: rgba(255,255,255,.6); line-height: 1.8; }
+    #perm-btn {
+      padding: 13px 38px; border: 1px solid rgba(255,255,255,.3);
+      background: rgba(255,255,255,.08); color: #fff; font-family: inherit;
+      font-size: 13px; letter-spacing: 3px; cursor: pointer; border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+
+<video id="video" autoplay playsinline muted webkit-playsinline></video>
+
+<div id="topbar">
+  <div class="logo">LEARN</div>
+  <div class="spacer"></div>
+  <button id="reset-btn">リセット</button>
+  <button id="cam-btn">⟳</button>
+  <div id="fps-box">-- FPS</div>
+  <div id="status-dot" class="loading"></div>
+</div>
+
+<div id="pred-panel">
+  <div id="pred-label">学習してください</div>
+  <div id="pred-conf">各クラスのボタンを長押しして学習</div>
+  <div id="pred-bars"></div>
+</div>
+
+<div id="class-bar">
+  <div id="mode-toggle">
+    <button class="mode-opt active" data-mode="learn">📚 学習</button>
+    <button class="mode-opt" data-mode="predict">🔍 判定</button>
+  </div>
+  <div id="class-btns"></div>
+  <div id="class-hint">ボタン長押し → サンプル学習 · ダブルタップ → 名前変更</div>
+</div>
+
+<div id="edit-overlay">
+  <h3>クラス名を変更</h3>
+  <input id="edit-input" type="text" maxlength="12" autocomplete="off"/>
+  <button id="edit-ok">OK</button>
+</div>
+
+<div id="splash">
+  <h1>LEARN</h1>
+  <p>リアルタイム転移学習<br>MobileNet + KNN 分類器<br>カメラで見せて · 覚えて · 判定</p>
+  <div id="prog-wrap"><div id="prog-bar"></div></div>
+  <div id="splash-msg">モデルを読み込み中…</div>
+  <button id="start-btn">▶ カメラ起動</button>
+</div>
+
+<div id="perm">
+  <div class="icon">🧠</div>
+  <p>カメラへのアクセスが必要です<br>次の画面で「許可」を選択してください</p>
+  <button id="perm-btn">アクセスを許可</button>
+</div>
+
+<script>
+(function () {
+
+  /* ── クラス定義 (5クラス) ── */
+  const CLASS_COLORS = ['#ff6b6b', '#4a9eff', '#00e676', '#ffa500', '#e040fb'];
+  const CLASS_EMOJIS = ['🅰️', '🅱️', '🟢', '🟠', '🟣'];
+  const classes = [
+    { name: 'クラス A', emoji: '🅰️', count: 0 },
+    { name: 'クラス B', emoji: '🅱️', count: 0 },
+    { name: 'クラス C', emoji: '🟢', count: 0 },
+    { name: 'クラス D', emoji: '🟠', count: 0 },
+    { name: 'クラス E', emoji: '🟣', count: 0 },
+  ];
+
+  /* ── 状態 ── */
+  let mobilenet = null, classifier = null;
+  let stream = null, animId = null, running = false;
+  let facingMode = 'environment', lastTime = 0, fpsArr = [];
+  let appMode = 'learn';       // 'learn' | 'predict'
+  let recordingClass = -1;     // 長押し中のクラスインデックス
+  let recordTimer = null;
+  let editIdx = -1;
+
+  const video = document.getElementById('video');
+
+  /* ── モデル読み込み ── */
+  async function loadModel() {
+    const bar = document.getElementById('prog-bar');
+    const msg = document.getElementById('splash-msg');
+    bar.style.width = '10%'; msg.textContent = 'TensorFlow 初期化中…';
+    await tf.setBackend('webgl'); await tf.ready();
+    bar.style.width = '30%'; msg.textContent = 'MobileNet を読み込み中…';
+    mobilenet = await mobilenetModule.load({ version: 2, alpha: 0.5 });
+    bar.style.width = '80%'; msg.textContent = 'KNN 分類器を初期化中…';
+    classifier = knnClassifier.create();
+    bar.style.width = '95%'; msg.textContent = '準備完了 — 転移学習';
+    await new Promise(r => setTimeout(r, 400));
+    bar.style.width = '100%';
+    await new Promise(r => setTimeout(r, 150));
+    document.getElementById('start-btn').classList.add('show');
+    msg.textContent = 'タップして開始';
+  }
+
+  /* ── カメラ ── */
+  async function startCamera() {
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: facingMode }, width: { ideal: 640 }, height: { ideal: 480 } },
+      audio: false,
+    });
+    video.srcObject = stream;
+    await new Promise(r => { video.onloadedmetadata = r; });
+    video.play();
+    video.classList.add('ready');
+  }
+
+  /* ── 特徴量抽出 ── */
+  function getActivation() {
+    return tf.tidy(() => mobilenet.infer(video, true));
+  }
+
+  /* ── 学習（1サンプル追加） ── */
+  function addSample(classIdx) {
+    const activation = getActivation();
+    classifier.addExample(activation, classIdx);
+    classes[classIdx].count++;
+    updateClassUI();
+  }
+
+  /* ── 推論 ── */
+  async function predict() {
+    if (classifier.getNumClasses() === 0) return null;
+    const activation = getActivation();
+    const result = await classifier.predictClass(activation, 5);
+    activation.dispose();
+    return result;
+  }
+
+  /* ── メインループ ── */
+  async function loop() {
+    if (!running) return;
+    const now = performance.now(), dt = now - lastTime;
+    lastTime = now;
+    if (dt > 0) {
+      fpsArr.push(1000 / dt); if (fpsArr.length > 8) fpsArr.shift();
+      document.getElementById('fps-box').textContent =
+        Math.round(fpsArr.reduce((a, b) => a + b) / fpsArr.length) + ' FPS';
+    }
+
+    // 長押し中 → サンプル追加
+    if (appMode === 'learn' && recordingClass >= 0) {
+      addSample(recordingClass);
+    }
+
+    // 判定モード → 推論
+    if (appMode === 'predict') {
+      const r = await predict();
+      updatePrediction(r);
+    }
+
+    animId = requestAnimationFrame(loop);
+  }
+
+  /* ── UI: 予測パネル ── */
+  function updatePrediction(result) {
+    const panel = document.getElementById('pred-panel');
+    panel.classList.add('show');
+
+    if (!result || classifier.getNumClasses() === 0) {
+      document.getElementById('pred-label').textContent = '学習データなし';
+      document.getElementById('pred-conf').textContent = 'まず学習モードでサンプルを追加してください';
+      document.getElementById('pred-bars').innerHTML = '';
+      return;
+    }
+
+    const topIdx  = parseInt(result.label);
+    const topConf = result.confidences[topIdx] || 0;
+    const cls     = classes[topIdx];
+
+    document.getElementById('pred-label').textContent = cls.emoji + ' ' + cls.name;
+    document.getElementById('pred-label').style.color = CLASS_COLORS[topIdx];
+    document.getElementById('pred-conf').textContent =
+      '信頼度 ' + Math.round(topConf * 100) + '%';
+
+    // バーグラフ
+    let html = '';
+    classes.forEach((c, i) => {
+      const pct = Math.round((result.confidences[i] || 0) * 100);
+      const col = CLASS_COLORS[i];
+      html += `<div class="pred-bar-row">
+        <span class="pred-bar-name" style="color:${col}">${c.name}</span>
+        <div class="pred-bar-bg"><div class="pred-bar-fill" style="width:${pct}%;background:${col}"></div></div>
+        <span class="pred-bar-pct">${pct}%</span>
+      </div>`;
+    });
+    document.getElementById('pred-bars').innerHTML = html;
+  }
+
+  /* ── UI: クラスボタン生成 ── */
+  function buildClassBtns() {
+    const wrap = document.getElementById('class-btns');
+    wrap.innerHTML = '';
+    classes.forEach((c, i) => {
+      const btn = document.createElement('button');
+      btn.className = 'cls-btn';
+      btn.style.borderColor = CLASS_COLORS[i] + '55';
+      btn.innerHTML = `<span class="cls-emoji">${c.emoji}</span>
+        <span class="cls-name">${c.name}</span>
+        <span class="cls-count">${c.count} 枚</span>`;
+      btn.dataset.idx = i;
+
+      /* 長押し → 学習 */
+      let pressTimer = null;
+      let dblTimer = null;
+      let tapCount = 0;
+
+      function startRecord(e) {
+        if (e) e.preventDefault();
+        if (appMode !== 'learn') return;
+        recordingClass = i;
+        btn.classList.add('recording');
+      }
+      function stopRecord(e) {
+        if (e) e.preventDefault();
+        recordingClass = -1;
+        btn.classList.remove('recording');
+      }
+
+      btn.addEventListener('touchstart', e => {
+        e.preventDefault();
+        tapCount++;
+        if (tapCount === 1) {
+          dblTimer = setTimeout(() => {
+            tapCount = 0;
+            startRecord();
+          }, 250);
+        } else if (tapCount === 2) {
+          clearTimeout(dblTimer);
+          tapCount = 0;
+          stopRecord();
+          openEdit(i);
+        }
+      }, { passive: false });
+      btn.addEventListener('touchend', e => {
+        if (recordingClass === i) stopRecord(e);
+      });
+      btn.addEventListener('touchcancel', stopRecord);
+
+      // マウス操作 (デスクトップ)
+      btn.addEventListener('mousedown', e => { startRecord(e); });
+      btn.addEventListener('mouseup', stopRecord);
+      btn.addEventListener('mouseleave', stopRecord);
+      btn.addEventListener('dblclick', e => { e.preventDefault(); openEdit(i); });
+
+      wrap.appendChild(btn);
+    });
+  }
+
+  function updateClassUI() {
+    const btns = document.querySelectorAll('.cls-btn');
+    btns.forEach((btn, i) => {
+      btn.querySelector('.cls-count').textContent = classes[i].count + ' 枚';
+    });
+  }
+
+  /* ── クラス名編集 ── */
+  function openEdit(idx) {
+    editIdx = idx;
+    const overlay = document.getElementById('edit-overlay');
+    const input   = document.getElementById('edit-input');
+    input.value = classes[idx].name;
+    overlay.classList.add('show');
+    setTimeout(() => input.focus(), 100);
+  }
+
+  document.getElementById('edit-ok').addEventListener('click', () => {
+    const v = document.getElementById('edit-input').value.trim();
+    if (v && editIdx >= 0) {
+      classes[editIdx].name = v;
+      buildClassBtns();
+      updateClassUI();
+    }
+    document.getElementById('edit-overlay').classList.remove('show');
+    editIdx = -1;
+  });
+  document.getElementById('edit-input').addEventListener('keyup', e => {
+    if (e.key === 'Enter') document.getElementById('edit-ok').click();
+  });
+
+  /* ── モード切替 ── */
+  document.querySelectorAll('.mode-opt').forEach(btn => {
+    btn.addEventListener('click', () => {
+      appMode = btn.dataset.mode;
+      document.querySelectorAll('.mode-opt').forEach(b =>
+        b.classList.toggle('active', b.dataset.mode === appMode));
+      document.getElementById('class-hint').textContent =
+        appMode === 'learn'
+          ? 'ボタン長押し → サンプル学習 · ダブルタップ → 名前変更'
+          : 'カメラに映したものをリアルタイム判定中';
+
+      const panel = document.getElementById('pred-panel');
+      if (appMode === 'learn') {
+        const total = classes.reduce((s, c) => s + c.count, 0);
+        document.getElementById('pred-label').textContent =
+          total > 0 ? '学習中 — ' + total + '枚' : '学習してください';
+        document.getElementById('pred-label').style.color = '#fff';
+        document.getElementById('pred-conf').textContent =
+          '各クラスのボタンを長押しして学習';
+        document.getElementById('pred-bars').innerHTML = '';
+        panel.classList.add('show');
+      }
+    });
+  });
+
+  /* ── リセット ── */
+  document.getElementById('reset-btn').addEventListener('click', () => {
+    if (!confirm('学習データをすべてリセットしますか？')) return;
+    classifier.clearAllClasses();
+    classes.forEach(c => { c.count = 0; });
+    updateClassUI();
+    document.getElementById('pred-label').textContent = '学習してください';
+    document.getElementById('pred-label').style.color = '#fff';
+    document.getElementById('pred-conf').textContent = '各クラスのボタンを長押しして学習';
+    document.getElementById('pred-bars').innerHTML = '';
+  });
+
+  /* ── カメラ切替 ── */
+  document.getElementById('cam-btn').addEventListener('click', async () => {
+    facingMode = facingMode === 'environment' ? 'user' : 'environment';
+    if (running) {
+      cancelAnimationFrame(animId);
+      await startCamera();
+      lastTime = 0; fpsArr = [];
+      animId = requestAnimationFrame(loop);
+    }
+  });
+
+  /* ── スプラッシュ / 許可 ── */
+  document.getElementById('start-btn').addEventListener('click', () => {
+    document.getElementById('splash').style.display = 'none';
+    document.getElementById('perm').classList.add('show');
+  });
+
+  document.getElementById('perm-btn').addEventListener('click', async () => {
+    document.getElementById('perm').classList.remove('show');
+    try {
+      await startCamera();
+      running = true;
+      document.getElementById('status-dot').classList.remove('loading');
+      document.getElementById('pred-panel').classList.add('show');
+      document.getElementById('class-bar').classList.add('show');
+      lastTime = performance.now();
+      animId = requestAnimationFrame(loop);
+    } catch (e) {
+      document.getElementById('status-dot').classList.add('error');
+      document.querySelector('#perm p').textContent =
+        'カメラへのアクセスが拒否されました。\nSafari 設定 → プライバシー → カメラ を確認してください。';
+      document.getElementById('perm').classList.add('show');
+    }
+  });
+
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+
+  buildClassBtns();
+
+  loadModel().catch(e => {
+    document.getElementById('splash-msg').textContent = 'モデルの読み込みに失敗しました';
+    document.getElementById('status-dot').classList.add('error');
+    console.error(e);
+  });
+
+})();
+</script>
+</body>
+</html>
