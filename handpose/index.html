@@ -665,7 +665,7 @@ document.getElementById('perm-btn').addEventListener('click',async()=>{
    }
 });
 window.addEventListener('resize',resizeCanvas);
-if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+if('serviceWorker' in navigator) navigator.serviceWorker.register('/TensorFlowjs-test/handpose/sw.js').catch(()=>{});
 loadModel().catch(e=>{
    window.__dlog('loadModel FATAL: '+e.message);
    document.getElementById('splash-msg').textContent='モデルの読み込みに失敗: '+e.message;
