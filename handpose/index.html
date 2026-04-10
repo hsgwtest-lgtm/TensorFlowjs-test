@@ -12,9 +12,16 @@
   <meta name="apple-mobile-web-app-title" content="HAND"/>
   <link rel="apple-touch-icon" href="icon-192.png"/>
 
+  <!--
+    ── runtime: 'mediapipe' stack ──────────────────────────────────────────
+    TF.js tfjs-runtime has a known bug where all keypoints return NaN
+    when running on mobile Safari/WebGL. Switching to the official
+    MediaPipe WASM runtime completely avoids TF.js coordinate processing.
+    ──────────────────────────────────────────────────────────────────────
+  -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/hands.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.10.0/dist/tf-core.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.10.0/dist/tf-backend-webgl.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4.10.0/dist/tf-converter.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection@2.0.1/dist/hand-pose-detection.min.js"></script>
 
   <style>
@@ -34,38 +41,37 @@
       font-family:'Helvetica Neue','Hiragino Sans',sans-serif; }
 
     #video  { position:fixed; inset:0; width:100%; height:100%; object-fit:cover; opacity:0; transition:opacity .5s; }
-    #video.ready { opacity:1; }
-    /* Front camera: mirror video visually */
+    #video.ready  { opacity:1; }
     #video.mirror { transform:scaleX(-1); }
     #canvas { position:fixed; inset:0; width:100%; height:100%; pointer-events:none; z-index:5; }
 
     /* ── Top bar ── */
     #topbar {
       position:fixed; top:0; left:0; right:0; z-index:20;
-      padding:calc(var(--safe-t) + 6px) 14px 6px;
+      padding:calc(var(--safe-t)+6px) 14px 6px;
       display:flex; align-items:center; gap:8px;
-      background:linear-gradient(rgba(10,10,15,0.85),transparent);
+      background:linear-gradient(rgba(10,10,15,.85),transparent);
     }
     .logo { font-size:15px; font-weight:700; letter-spacing:4px; color:#fff; }
-    .sub  { font-size:10px; color:rgba(255,255,255,0.4); letter-spacing:2px; margin-left:-4px; }
+    .sub  { font-size:10px; color:rgba(255,255,255,.4); letter-spacing:2px; margin-left:-4px; }
     .spacer { flex:1; }
     #cam-btn {
-      background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.2);
+      background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.2);
       color:#fff; font-size:16px; padding:4px 10px; cursor:pointer; border-radius:6px; line-height:1;
     }
     #dbg-btn {
-      background:rgba(255,255,255,0.08); border:1px solid rgba(0,188,212,0.4);
-      color:rgba(0,188,212,0.8); font-size:10px; padding:4px 8px; cursor:pointer;
+      background:rgba(255,255,255,.08); border:1px solid rgba(0,188,212,.4);
+      color:rgba(0,188,212,.8); font-size:10px; padding:4px 8px; cursor:pointer;
       border-radius:6px; letter-spacing:1px;
     }
-    #dbg-btn.active { background:rgba(0,188,212,0.2); color:#0ff; border-color:#0ff; }
+    #dbg-btn.active { background:rgba(0,188,212,.2); color:#0ff; border-color:#0ff; }
     #fps-box {
-      font-size:11px; color:rgba(255,255,255,0.6); padding:3px 8px;
-      border:1px solid rgba(255,255,255,0.15); border-radius:4px;
+      font-size:11px; color:rgba(255,255,255,.6); padding:3px 8px;
+      border:1px solid rgba(255,255,255,.15); border-radius:4px;
       font-family:'Courier New',monospace; letter-spacing:1px;
     }
-    #status-dot { width:8px; height:8px; border-radius:50%; background:#00e676;
-      box-shadow:0 0 6px #00e676; animation:blink 1.5s infinite; }
+    #status-dot { width:8px; height:8px; border-radius:50%;
+      background:#00e676; box-shadow:0 0 6px #00e676; animation:blink 1.5s infinite; }
     #status-dot.loading { background:#ffb800; box-shadow:0 0 6px #ffb800; }
     #status-dot.error   { background:#ff3a3a; box-shadow:0 0 6px #ff3a3a; animation:none; }
     @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
@@ -73,12 +79,12 @@
     /* ── Debug ── */
     #debug-panel {
       display:none; position:fixed; bottom:110px; left:8px; right:8px; z-index:30;
-      background:rgba(0,0,0,0.92); border:1px solid rgba(0,188,212,0.6); border-radius:8px;
+      background:rgba(0,0,0,.93); border:1px solid rgba(0,188,212,.6); border-radius:8px;
       padding:10px 12px; font-family:'Courier New',monospace; font-size:10.5px;
-      color:#0ff; line-height:1.7; max-height:240px; overflow-y:auto;
+      color:#0ff; line-height:1.7; max-height:220px; overflow-y:auto;
     }
     #debug-panel.show { display:block; }
-    #debug-panel .dk { color:rgba(255,255,255,0.4); display:inline-block; min-width:130px; }
+    #debug-panel .dk { color:rgba(255,255,255,.4); display:inline-block; min-width:130px; }
     #debug-panel .dv { color:#fff; }
     #debug-panel .dh { color:#ffb800; font-weight:bold; margin-bottom:2px; }
 
@@ -88,66 +94,64 @@
     #badges.show { display:flex; }
     .badge {
       width:76px; height:68px;
-      background:rgba(0,188,212,0.18); border:1.5px solid rgba(0,188,212,0.65);
+      background:rgba(0,188,212,.18); border:1.5px solid rgba(0,188,212,.65);
       clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);
       display:flex; flex-direction:column; align-items:center; justify-content:center;
     }
     .badge .bval  { font-size:18px; font-weight:700; color:#fff; line-height:1; }
-    .badge .blbl  { font-size:9px;  color:rgba(0,188,212,0.9); letter-spacing:1px; margin-top:2px; }
-    .badge .bhand { font-size:9px;  color:rgba(255,255,255,0.6); letter-spacing:1px; }
+    .badge .blbl  { font-size:9px;  color:rgba(0,188,212,.9); letter-spacing:1px; margin-top:2px; }
+    .badge .bhand { font-size:9px;  color:rgba(255,255,255,.6); letter-spacing:1px; }
 
     /* ── Info panel ── */
     #info-panel { position:fixed; top:50%; right:10px; z-index:20; transform:translateY(-50%);
       display:none; flex-direction:column; gap:4px; }
     #info-panel.show { display:flex; }
     .info-section {
-      background:rgba(10,10,15,0.78); border:1px solid rgba(255,255,255,0.13);
+      background:rgba(10,10,15,.78); border:1px solid rgba(255,255,255,.13);
       border-radius:7px; padding:5px 8px; font-size:10px;
-      color:rgba(255,255,255,0.6); white-space:nowrap; text-align:right;
+      color:rgba(255,255,255,.6); white-space:nowrap; text-align:right;
     }
-    .info-section .sec-title { font-size:9px; color:rgba(255,255,255,0.3); letter-spacing:1px; margin-bottom:3px; }
+    .info-section .sec-title { font-size:9px; color:rgba(255,255,255,.3); letter-spacing:1px; margin-bottom:3px; }
     .info-section .row { display:flex; justify-content:space-between; gap:8px; line-height:1.6; }
-    .info-section .row .lbl { color:rgba(255,255,255,0.45); }
+    .info-section .row .lbl { color:rgba(255,255,255,.45); }
     .info-section .row .val { color:#fff; font-weight:700; min-width:60px; text-align:right; font-family:'Courier New',monospace; }
-    .t-color{color:var(--thumb)!important}
-    .i-color{color:var(--index)!important}
-    .m-color{color:var(--middle)!important}
-    .r-color{color:var(--ring)!important}
+    .t-color{color:var(--thumb)!important} .i-color{color:var(--index)!important}
+    .m-color{color:var(--middle)!important} .r-color{color:var(--ring)!important}
     .p-color{color:var(--pinky)!important}
 
     /* ── Bottom ── */
     #bottom { position:fixed; bottom:0; left:0; right:0; z-index:20;
       padding:8px 14px calc(var(--safe-b)+10px);
-      background:linear-gradient(transparent,rgba(10,10,15,0.88));
+      background:linear-gradient(transparent,rgba(10,10,15,.88));
       display:none; flex-direction:column; gap:3px; }
     #bottom.show { display:flex; }
-    .brow { font-size:11px; color:rgba(255,255,255,0.5); letter-spacing:1px; text-align:center; }
+    .brow { font-size:11px; color:rgba(255,255,255,.5); letter-spacing:1px; text-align:center; }
     .brow span { font-weight:700; color:#fff; }
     .legend-row { display:flex; justify-content:center; gap:12px; margin-top:2px; }
-    .leg-item { font-size:9px; display:flex; align-items:center; gap:4px; color:rgba(255,255,255,0.5); }
+    .leg-item { font-size:9px; display:flex; align-items:center; gap:4px; color:rgba(255,255,255,.5); }
     .leg-dot  { width:7px; height:7px; border-radius:50%; }
 
     /* ── Crosshair ── */
     #crosshair { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
       pointer-events:none; z-index:6; }
     .ch-h { position:absolute; top:50%; left:-14px; right:-14px; height:1.5px;
-      transform:translateY(-50%); background:rgba(255,255,255,0.35); }
+      transform:translateY(-50%); background:rgba(255,255,255,.35); }
     .ch-v { position:absolute; left:50%; top:-14px; bottom:-14px; width:1.5px;
-      transform:translateX(-50%); background:rgba(255,255,255,0.35); }
+      transform:translateX(-50%); background:rgba(255,255,255,.35); }
 
     /* ── Splash ── */
     #splash { position:fixed; inset:0; z-index:100; background:var(--bg);
       display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px; padding:40px; }
     #splash h1 { font-size:28px; letter-spacing:8px; color:#fff; font-weight:300; }
-    #splash p  { font-size:12px; letter-spacing:2px; color:rgba(255,255,255,0.4); text-align:center; line-height:1.8; }
-    #prog-wrap { width:200px; height:2px; background:rgba(255,255,255,0.1); }
+    #splash p  { font-size:12px; letter-spacing:2px; color:rgba(255,255,255,.4); text-align:center; line-height:1.8; }
+    #prog-wrap { width:200px; height:2px; background:rgba(255,255,255,.1); }
     #prog-bar  { height:100%; width:0%; background:#00bcd4; transition:width .3s; }
-    #splash-msg { font-size:11px; color:rgba(255,255,255,0.45); letter-spacing:2px; }
-    #start-btn { display:none; padding:12px 36px; border:1px solid rgba(255,255,255,0.3);
-      background:rgba(255,255,255,0.06); color:#fff; font-size:13px; letter-spacing:4px;
+    #splash-msg { font-size:11px; color:rgba(255,255,255,.45); letter-spacing:2px; }
+    #start-btn { display:none; padding:12px 36px; border:1px solid rgba(255,255,255,.3);
+      background:rgba(255,255,255,.06); color:#fff; font-size:13px; letter-spacing:4px;
       cursor:pointer; border-radius:4px; font-family:inherit; }
     #start-btn.show { display:block; }
-    .hand-icon { font-size:48px; filter:drop-shadow(0 0 16px rgba(0,188,212,0.5)); }
+    .hand-icon { font-size:48px; filter:drop-shadow(0 0 16px rgba(0,188,212,.5)); }
 
     /* ── Perm ── */
     #perm { display:none; position:fixed; inset:0; z-index:101; background:var(--bg);
@@ -155,9 +159,9 @@
       padding:40px; text-align:center; }
     #perm.show { display:flex; }
     #perm .icon { font-size:50px; }
-    #perm p { font-size:13px; color:rgba(255,255,255,0.6); line-height:1.8; }
-    #perm-btn { padding:13px 38px; border:1px solid rgba(255,255,255,0.3);
-      background:rgba(255,255,255,0.08); color:#fff; font-family:inherit;
+    #perm p { font-size:13px; color:rgba(255,255,255,.6); line-height:1.8; }
+    #perm-btn { padding:13px 38px; border:1px solid rgba(255,255,255,.3);
+      background:rgba(255,255,255,.08); color:#fff; font-family:inherit;
       font-size:13px; letter-spacing:3px; cursor:pointer; border-radius:4px; }
   </style>
 </head>
@@ -168,8 +172,7 @@
 <div id="crosshair"><div class="ch-h"></div><div class="ch-v"></div></div>
 
 <div id="topbar">
-  <div class="logo">HAND</div>
-  <div class="sub">骨格検出</div>
+  <div class="logo">HAND</div><div class="sub">骨格検出</div>
   <div class="spacer"></div>
   <button id="dbg-btn">DBG</button>
   <button id="cam-btn">⟳</button>
@@ -181,12 +184,12 @@
 
 <div id="badges">
   <div class="badge">
-    <div class="bval"  id="score-val-0">--</div>
+    <div class="bval" id="score-val-0">--</div>
     <div class="blbl">開き度</div>
     <div class="bhand" id="hand-label-0">--</div>
   </div>
   <div class="badge" id="badge-1" style="display:none;">
-    <div class="bval"  id="score-val-1">--</div>
+    <div class="bval" id="score-val-1">--</div>
     <div class="blbl">開き度</div>
     <div class="bhand" id="hand-label-1">--</div>
   </div>
@@ -240,14 +243,15 @@
 <script>
 (function(){
   /*
-   * ── IMPORTANT BUG WORKAROUND ──────────────────────────────────────────────
-   * hand-pose-detection@2.0.1 with runtime:'tfjs' produces NaN x/y coordinates
-   * when flipHorizontal:true is passed to estimateHands().
-   * Fix: always call estimateHands with flipHorizontal:false, then manually
-   *      mirror x-coordinates (vw - x) at draw time for the front camera.
+   * ── Why runtime:'mediapipe' ──────────────────────────────────────────────
+   * hand-pose-detection@2.0.1 with runtime:'tfjs' produces NaN x/y for ALL
+   * keypoints on mobile Safari (both front & rear camera), regardless of the
+   * flipHorizontal flag.  Switching to runtime:'mediapipe' bypasses TF.js
+   * coordinate processing entirely and uses the official MediaPipe WASM
+   * pipeline — coordinates are always valid pixel values.
    * ─────────────────────────────────────────────────────────────────────────
    *
-   * MediaPipe Hands 21 landmarks:
+   * MediaPipe Hands 21 landmarks (normalized 0-1, scaled to canvas below):
    *  0=WRIST
    *  1=THUMB_CMC  2=THUMB_MCP  3=THUMB_IP   4=THUMB_TIP
    *  5=INDEX_MCP  6=INDEX_PIP  7=INDEX_DIP  8=INDEX_TIP
@@ -260,7 +264,6 @@
     palm:'#e0e0e0', thumb:'#ff6b6b', index:'#4a9eff',
     middle:'#00e676', ring:'#ff8c00', pinky:'#c084fc'
   };
-
   const CONNECTIONS = [
     [0,1,C.thumb],[0,5,C.index],[0,17,C.pinky],
     [5,9,C.palm],[9,13,C.palm],[13,17,C.palm],
@@ -270,56 +273,44 @@
     [13,14,C.ring],[14,15,C.ring],[15,16,C.ring],
     [17,18,C.pinky],[18,19,C.pinky],[19,20,C.pinky],
   ];
-
   function dotColor(i){
-    if(i===0) return C.palm;
-    if(i<=4)  return C.thumb;
-    if(i<=8)  return C.index;
-    if(i<=12) return C.middle;
-    if(i<=16) return C.ring;
-    return C.pinky;
+    if(i===0)return C.palm; if(i<=4)return C.thumb; if(i<=8)return C.index;
+    if(i<=12)return C.middle; if(i<=16)return C.ring; return C.pinky;
   }
 
-  // ── NaN-safe helpers ──
-  function valid(p){ return p!=null && typeof p.x==='number' && !isNaN(p.x) && !isNaN(p.y); }
+  // ── Math helpers ──
+  function valid(p){ return p!=null&&typeof p.x==='number'&&!isNaN(p.x)&&!isNaN(p.y); }
 
   function angle3(a,m,b){
     if(!valid(a)||!valid(m)||!valid(b)) return null;
-    const ax=a.x-m.x, ay=a.y-m.y, bx=b.x-m.x, by=b.y-m.y;
-    const la=Math.sqrt(ax*ax+ay*ay), lb=Math.sqrt(bx*bx+by*by);
+    const ax=a.x-m.x,ay=a.y-m.y,bx=b.x-m.x,by=b.y-m.y;
+    const la=Math.sqrt(ax*ax+ay*ay),lb=Math.sqrt(bx*bx+by*by);
     if(la<1e-6||lb<1e-6) return null;
     const deg=Math.acos(Math.max(-1,Math.min(1,(ax*bx+ay*by)/(la*lb))))*180/Math.PI;
     return isNaN(deg)?null:Math.round(deg);
   }
-
   function dist2d(a,b){
     if(!valid(a)||!valid(b)) return 0;
     return Math.sqrt((a.x-b.x)**2+(a.y-b.y)**2);
   }
-
   function spreadAngle(a0,a1,b0,b1){
     if(!valid(a0)||!valid(a1)||!valid(b0)||!valid(b1)) return null;
-    const ax=a1.x-a0.x, ay=a1.y-a0.y, bx=b1.x-b0.x, by=b1.y-b0.y;
-    const la=Math.sqrt(ax*ax+ay*ay), lb=Math.sqrt(bx*bx+by*by);
+    const ax=a1.x-a0.x,ay=a1.y-a0.y,bx=b1.x-b0.x,by=b1.y-b0.y;
+    const la=Math.sqrt(ax*ax+ay*ay),lb=Math.sqrt(bx*bx+by*by);
     if(la<1e-6||lb<1e-6) return null;
     const deg=Math.acos(Math.max(-1,Math.min(1,(ax*bx+ay*by)/(la*lb))))*180/Math.PI;
     return isNaN(deg)?null:Math.round(deg);
   }
-
   function openScore(lm){
-    const palmW=dist2d(lm[0],lm[5]);
-    if(!palmW) return 0;
-    let sum=0;
-    [4,8,12,16,20].forEach(t=>{ sum+=dist2d(lm[0],lm[t]); });
-    return Math.min(100,Math.round((sum/5)/palmW*50));
+    const w=dist2d(lm[0],lm[5]); if(!w) return 0;
+    let s=0; [4,8,12,16,20].forEach(t=>{ s+=dist2d(lm[0],lm[t]); });
+    return Math.min(100,Math.round((s/5)/w*50));
   }
-
   function palmTilt(lm){
     if(!valid(lm[0])||!valid(lm[9])) return null;
-    const deg=Math.atan2(lm[9].x-lm[0].x, lm[9].y-lm[0].y)*180/Math.PI;
+    const deg=Math.atan2(lm[9].x-lm[0].x,lm[9].y-lm[0].y)*180/Math.PI;
     return isNaN(deg)?null:Math.round(deg);
   }
-
   function getHandedness(hand){
     const h=hand.handedness;
     if(typeof h==='string') return h;
@@ -327,12 +318,21 @@
     return 'Right';
   }
 
-  // ── Apply front-camera x-flip to a keypoints array ──
-  // TF.js hand-pose-detection@2.0.1 produces NaN when flipHorizontal:true is
-  // passed to estimateHands, so we pass false and flip manually here.
-  function applyFlip(kps, vw, doFlip){
+  // ── runtime:'mediapipe' returns normalized [0,1] coords → scale to canvas px ──
+  function scaleKps(kps, cw, ch){
+    return kps.map(p=>{
+      if(!p) return p;
+      // If already in pixel range (max > 2), keep as-is
+      const mx = kps.reduce((m,q)=>q&&q.x>m?q.x:m,0);
+      if(mx>2) return p;
+      return {...p, x:p.x*cw, y:p.y*ch};
+    });
+  }
+
+  // Front camera: flip x after scaling
+  function applyMirror(kps, cw, doFlip){
     if(!doFlip) return kps;
-    return kps.map(p => p ? { ...p, x: vw - p.x } : p);
+    return kps.map(p=> p ? {...p, x: cw-p.x} : p);
   }
 
   // ── State ──
@@ -353,35 +353,52 @@
 
   function updateDebug(hands,vw,vh){
     if(!debugMode) return;
-    let html=`<div class="dh">─── DEBUG ───</div>`;
+    let html=`<div class="dh">─── DEBUG (mediapipe runtime) ───</div>`;
     html+=`<div><span class="dk">video size</span><span class="dv">${vw}×${vh}</span></div>`;
     html+=`<div><span class="dk">facingMode</span><span class="dv">${facingMode}</span></div>`;
     html+=`<div><span class="dk">hands found</span><span class="dv">${hands.length}</span></div>`;
     if(hands.length){
-      const h=hands[0];
-      const raw=h.keypoints||[];
-      const p0=raw[0]||{}, p8=raw[8]||{};
+      const h=hands[0]; const raw=h.keypoints||[];
+      const p0=raw[0]||{},p8=raw[8]||{};
       html+=`<div><span class="dk">handedness</span><span class="dv">${getHandedness(h)}</span></div>`;
       html+=`<div><span class="dk">keypoints.len</span><span class="dv">${raw.length}</span></div>`;
-      html+=`<div><span class="dk">kp[0] WRIST raw</span><span class="dv">x:${p0.x?.toFixed(2)||'?'} y:${p0.y?.toFixed(2)||'?'}</span></div>`;
-      html+=`<div><span class="dk">kp[8] IDX-TIP raw</span><span class="dv">x:${p8.x?.toFixed(2)||'?'} y:${p8.y?.toFixed(2)||'?'}</span></div>`;
-      html+=`<div><span class="dk">coord NaN?</span><span class="dv">${isNaN(p0.x)?'YES — bug triggered':'NO — OK'}</span></div>`;
+      html+=`<div><span class="dk">kp[0] raw</span><span class="dv">x:${p0.x?.toFixed(4)||'?'} y:${p0.y?.toFixed(4)||'?'}</span></div>`;
+      html+=`<div><span class="dk">kp[8] raw</span><span class="dv">x:${p8.x?.toFixed(4)||'?'} y:${p8.y?.toFixed(4)||'?'}</span></div>`;
+      const nanCheck=isNaN(p0.x);
+      html+=`<div><span class="dk">coords valid?</span><span class="dv" style="color:${nanCheck?'#f66':'#0f6'}">${nanCheck?'NaN — STILL BROKEN':'OK ✓'}</span></div>`;
     }
     dbgEl.innerHTML=html;
   }
 
-  // ── Load model ──
+  // ── Load model (runtime: 'mediapipe') ──
   async function loadModel(){
     const bar=document.getElementById('prog-bar');
     const msg=document.getElementById('splash-msg');
-    bar.style.width='10%'; msg.textContent='TensorFlow初期化中…';
-    await tf.setBackend('webgl'); await tf.ready();
-    bar.style.width='40%'; msg.textContent='MediaPipe Handsを読み込み中…';
-    detector = await handPoseDetection.createDetector(
-      handPoseDetection.SupportedModels.MediaPipeHands,
-      { runtime:'tfjs', modelType:'full', maxHands:2 }
-    );
-    bar.style.width='90%'; msg.textContent='準備完了 — 21点×2手';
+    bar.style.width='20%'; msg.textContent='MediaPipe初期化中…';
+
+    try {
+      detector = await handPoseDetection.createDetector(
+        handPoseDetection.SupportedModels.MediaPipeHands,
+        {
+          runtime: 'mediapipe',
+          solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915',
+          modelType: 'full',
+          maxHands: 2,
+        }
+      );
+      bar.style.width='90%'; msg.textContent='準備完了 — MediaPipe Hands 21点×2手';
+    } catch(e) {
+      // Fallback: try tfjs runtime as last resort
+      console.warn('mediapipe runtime failed, falling back to tfjs:', e);
+      bar.style.width='50%'; msg.textContent='フォールバック: tfjs runtime…';
+      await tf.setBackend('webgl'); await tf.ready();
+      detector = await handPoseDetection.createDetector(
+        handPoseDetection.SupportedModels.MediaPipeHands,
+        { runtime:'tfjs', modelType:'full', maxHands:2 }
+      );
+      bar.style.width='90%'; msg.textContent='準備完了 (tfjs fallback)';
+    }
+
     await new Promise(r=>setTimeout(r,400));
     bar.style.width='100%';
     await new Promise(r=>setTimeout(r,150));
@@ -398,10 +415,14 @@
     });
     video.srcObject=stream;
     await new Promise(r=>{ video.onloadedmetadata=r; });
+    // Wait for video to be truly ready (Safari workaround)
+    await new Promise(r=>{
+      if(video.readyState>=2){ r(); return; }
+      video.oncanplay=r;
+    });
     video.play();
     resizeCanvas();
     video.classList.add('ready');
-    // Mirror video element visually for front camera
     video.classList.toggle('mirror', facingMode==='user');
   }
 
@@ -413,7 +434,7 @@
   // ── Loop ──
   async function loop(){
     if(!running) return;
-    const now=performance.now(), dt=now-lastTime; lastTime=now;
+    const now=performance.now(),dt=now-lastTime; lastTime=now;
     if(dt>0){
       fpsArr.push(1000/dt); if(fpsArr.length>8) fpsArr.shift();
       document.getElementById('fps-box').textContent=
@@ -421,10 +442,10 @@
     }
     let hands=[];
     try{
-      // !! Always pass flipHorizontal:false to avoid NaN bug in v2.0.1 !!
-      // We flip coordinates manually in draw() for the front camera.
+      // mediapipe runtime handles mirroring internally via flipHorizontal
+      // For front camera we still pass false and mirror manually to stay consistent
       hands = await detector.estimateHands(video, { flipHorizontal: false });
-    }catch(e){ console.warn('estimateHands error:', e); }
+    }catch(e){ console.warn(e); }
     draw(hands);
     animId=requestAnimationFrame(loop);
   }
@@ -443,32 +464,27 @@
     const bottomB = document.getElementById('bottom');
 
     if(!hands||!hands.length){
-      badges.classList.remove('show');
-      infoP.classList.remove('show');
-      bottomB.classList.remove('show');
+      badges.classList.remove('show'); infoP.classList.remove('show'); bottomB.classList.remove('show');
       document.getElementById('hand-info').textContent='手をかざしてください 👋';
       return;
     }
+    badges.classList.add('show'); infoP.classList.add('show'); bottomB.classList.add('show');
+    document.getElementById('badge-1').style.display=hands.length>1?'flex':'none';
 
-    badges.classList.add('show');
-    infoP.classList.add('show');
-    bottomB.classList.add('show');
-    document.getElementById('badge-1').style.display = hands.length>1?'flex':'none';
-
-    // Front camera: flip x coordinates to match mirrored video display
-    const needFlip = (facingMode === 'user');
+    const needMirror=(facingMode==='user');
 
     hands.forEach((hand,hi)=>{
-      const raw = hand.keypoints || [];
-      // Manually flip x for front camera (workaround for flipHorizontal:true NaN bug)
-      const lm  = applyFlip(raw, vw, needFlip);
+      const raw = hand.keypoints||[];
+      // Scale normalized coords → pixels, then mirror for front cam
+      let lm = scaleKps(raw, vw, vh);
+      lm = applyMirror(lm, vw, needMirror);
 
-      const handedness = getHandedness(hand);
+      const handedness=getHandedness(hand);
 
-      // ── Skeleton lines ──
+      // ── Skeleton ──
       ctx.lineCap='round';
       CONNECTIONS.forEach(([i,j,col])=>{
-        const a=lm[i], b=lm[j];
+        const a=lm[i],b=lm[j];
         if(!valid(a)||!valid(b)) return;
         ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y);
         ctx.strokeStyle=col; ctx.lineWidth=3.5;
@@ -478,12 +494,11 @@
       // ── Joints ──
       lm.forEach((p,i)=>{
         if(!valid(p)) return;
-        const col=dotColor(i);
-        const r=(i===0)?7:(i%4===0)?6:4;
+        const col=dotColor(i), r=(i===0)?7:(i%4===0)?6:4;
         ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2);
         ctx.fillStyle=col; ctx.shadowColor=col; ctx.shadowBlur=10; ctx.fill(); ctx.shadowBlur=0;
         ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2);
-        ctx.strokeStyle='rgba(255,255,255,0.6)'; ctx.lineWidth=1.5; ctx.stroke();
+        ctx.strokeStyle='rgba(255,255,255,.6)'; ctx.lineWidth=1.5; ctx.stroke();
       });
 
       // ── Angle labels ──
@@ -491,93 +506,78 @@
       ctx.textBaseline='middle';
       function canvasLabel(pt,text,col){
         if(!valid(pt)||text===null) return;
-        const x=pt.x+8, y=pt.y-10;
-        const w=ctx.measureText(text).width+8;
-        ctx.fillStyle='rgba(0,0,0,0.65)'; ctx.fillRect(x-4,y-9,w,18);
+        const x=pt.x+8,y=pt.y-10,w=ctx.measureText(text).width+8;
+        ctx.fillStyle='rgba(0,0,0,.65)'; ctx.fillRect(x-4,y-9,w,18);
         ctx.fillStyle=col; ctx.fillText(text,x,y);
       }
 
-      // Thumb: CMC / MCP / IP
       const tCMC=angle3(lm[0],lm[1],lm[2]);
       const tMCP=angle3(lm[1],lm[2],lm[3]);
       const tIP =angle3(lm[2],lm[3],lm[4]);
-      canvasLabel(lm[2], tMCP!==null?tMCP+'°':null, C.thumb);
-      canvasLabel(lm[3], tIP !==null?tIP+'°':null,  C.thumb);
+      canvasLabel(lm[2],tMCP!==null?tMCP+'°':null,C.thumb);
+      canvasLabel(lm[3],tIP !==null?tIP+'°':null, C.thumb);
 
-      // Index: MCP / PIP / DIP
       const iMCP=angle3(lm[0],lm[5],lm[6]);
       const iPIP=angle3(lm[5],lm[6],lm[7]);
       const iDIP=angle3(lm[6],lm[7],lm[8]);
-      canvasLabel(lm[6], iPIP!==null?iPIP+'°':null, C.index);
-      canvasLabel(lm[7], iDIP!==null?iDIP+'°':null, C.index);
+      canvasLabel(lm[6],iPIP!==null?iPIP+'°':null,C.index);
+      canvasLabel(lm[7],iDIP!==null?iDIP+'°':null,C.index);
 
-      // Middle
-      const mMCP=angle3(lm[0],lm[9], lm[10]);
+      const mMCP=angle3(lm[0],lm[9],lm[10]);
       const mPIP=angle3(lm[9],lm[10],lm[11]);
       const mDIP=angle3(lm[10],lm[11],lm[12]);
-      canvasLabel(lm[10], mPIP!==null?mPIP+'°':null, C.middle);
-      canvasLabel(lm[11], mDIP!==null?mDIP+'°':null, C.middle);
+      canvasLabel(lm[10],mPIP!==null?mPIP+'°':null,C.middle);
+      canvasLabel(lm[11],mDIP!==null?mDIP+'°':null,C.middle);
 
-      // Ring
       const rMCP=angle3(lm[0],lm[13],lm[14]);
       const rPIP=angle3(lm[13],lm[14],lm[15]);
       const rDIP=angle3(lm[14],lm[15],lm[16]);
-      canvasLabel(lm[14], rPIP!==null?rPIP+'°':null, C.ring);
-      canvasLabel(lm[15], rDIP!==null?rDIP+'°':null, C.ring);
+      canvasLabel(lm[14],rPIP!==null?rPIP+'°':null,C.ring);
+      canvasLabel(lm[15],rDIP!==null?rDIP+'°':null,C.ring);
 
-      // Pinky
       const pMCP=angle3(lm[0],lm[17],lm[18]);
       const pPIP=angle3(lm[17],lm[18],lm[19]);
       const pDIP=angle3(lm[18],lm[19],lm[20]);
-      canvasLabel(lm[18], pPIP!==null?pPIP+'°':null, C.pinky);
-      canvasLabel(lm[19], pDIP!==null?pDIP+'°':null, C.pinky);
+      canvasLabel(lm[18],pPIP!==null?pPIP+'°':null,C.pinky);
+      canvasLabel(lm[19],pDIP!==null?pDIP+'°':null,C.pinky);
 
-      // Handedness label near wrist
+      // Handedness label
       if(valid(lm[0])){
         ctx.font='bold 14px "Helvetica Neue",sans-serif';
-        const hLabel=handedness==='Left'?'左手':'右手';
-        const hw=ctx.measureText(hLabel).width+12;
-        ctx.fillStyle='rgba(0,0,0,0.75)';
-        ctx.fillRect(lm[0].x-hw/2, lm[0].y+13, hw, 20);
-        ctx.fillStyle='rgba(255,255,255,0.95)';
-        ctx.textBaseline='top';
-        ctx.fillText(hLabel, lm[0].x-hw/2+6, lm[0].y+14);
-        ctx.textBaseline='middle';
+        const hL=handedness==='Left'?'左手':'右手';
+        const hw=ctx.measureText(hL).width+12;
+        ctx.fillStyle='rgba(0,0,0,.75)'; ctx.fillRect(lm[0].x-hw/2,lm[0].y+13,hw,20);
+        ctx.fillStyle='rgba(255,255,255,.95)'; ctx.textBaseline='top';
+        ctx.fillText(hL,lm[0].x-hw/2+6,lm[0].y+14); ctx.textBaseline='middle';
       }
 
       // ── Metrics ──
-      const open  = openScore(lm);
-      const tilt  = palmTilt(lm);
-      const wAng  = angle3(lm[5],lm[0],lm[17]);
-      const spTI  = spreadAngle(lm[0],lm[2], lm[0],lm[5]);
-      const spIM  = spreadAngle(lm[0],lm[5], lm[0],lm[9]);
-      const spMR  = spreadAngle(lm[0],lm[9], lm[0],lm[13]);
-      const spRP  = spreadAngle(lm[0],lm[13],lm[0],lm[17]);
+      const open =openScore(lm);
+      const tilt =palmTilt(lm);
+      const wAng =angle3(lm[5],lm[0],lm[17]);
+      const spTI =spreadAngle(lm[0],lm[2], lm[0],lm[5]);
+      const spIM =spreadAngle(lm[0],lm[5], lm[0],lm[9]);
+      const spMR =spreadAngle(lm[0],lm[9], lm[0],lm[13]);
+      const spRP =spreadAngle(lm[0],lm[13],lm[0],lm[17]);
 
-      let totalBend=0, bendCnt=0;
-      [iPIP,mPIP,rPIP,pPIP].forEach(a=>{
-        if(a!==null){ totalBend+=Math.abs(180-a); bendCnt++; }
-      });
+      let totalBend=0,bendCnt=0;
+      [iPIP,mPIP,rPIP,pPIP].forEach(a=>{ if(a!==null){totalBend+=Math.abs(180-a);bendCnt++;} });
 
-      // ── DOM update ──
       if(hi===0){
         document.getElementById('score-val-0').textContent=open;
         document.getElementById('hand-label-0').textContent=handedness==='Left'?'左手':'右手';
-
-        function fmt(...v){ return v.map(x=>x!==null?x+'°':'--').join('/'); }
-        document.getElementById('a-thumb').textContent  = fmt(tCMC,tMCP,tIP);
-        document.getElementById('a-index').textContent  = fmt(iMCP,iPIP,iDIP);
-        document.getElementById('a-middle').textContent = fmt(mMCP,mPIP,mDIP);
-        document.getElementById('a-ring').textContent   = fmt(rMCP,rPIP,rDIP);
-        document.getElementById('a-pinky').textContent  = fmt(pMCP,pPIP,pDIP);
-
+        function fmt(...v){return v.map(x=>x!==null?x+'°':'--').join('/');}
+        document.getElementById('a-thumb').textContent =fmt(tCMC,tMCP,tIP);
+        document.getElementById('a-index').textContent =fmt(iMCP,iPIP,iDIP);
+        document.getElementById('a-middle').textContent=fmt(mMCP,mPIP,mDIP);
+        document.getElementById('a-ring').textContent  =fmt(rMCP,rPIP,rDIP);
+        document.getElementById('a-pinky').textContent =fmt(pMCP,pPIP,pDIP);
         document.getElementById('sp-ti').textContent=spTI!==null?spTI+'°':'--°';
         document.getElementById('sp-im').textContent=spIM!==null?spIM+'°':'--°';
         document.getElementById('sp-mr').textContent=spMR!==null?spMR+'°':'--°';
         document.getElementById('sp-rp').textContent=spRP!==null?spRP+'°':'--°';
-
-        document.getElementById('v-wrist').textContent=wAng !==null?wAng+'°':'--°';
-        document.getElementById('v-palm').textContent =tilt !==null?tilt+'°':'--°';
+        document.getElementById('v-wrist').textContent=wAng!==null?wAng+'°':'--°';
+        document.getElementById('v-palm').textContent =tilt!==null?tilt+'°':'--°';
         document.getElementById('v-total').textContent=bendCnt?Math.round(totalBend)+'°':'--°';
       }
       if(hi===1){
@@ -586,9 +586,8 @@
       }
     });
 
-    const labels=hands.map(h=>getHandedness(h)==='Left'?'左手':'右手');
     document.getElementById('hand-info').textContent=
-      labels.join(' + ')+' 検出中 ('+hands.length+'手)';
+      hands.map(h=>getHandedness(h)==='Left'?'左手':'右手').join(' + ')+' 検出中 ('+hands.length+'手)';
   }
 
   // ── Controls ──
@@ -601,12 +600,10 @@
       animId=requestAnimationFrame(loop);
     }
   });
-
   document.getElementById('start-btn').addEventListener('click',()=>{
     document.getElementById('splash').style.display='none';
     document.getElementById('perm').classList.add('show');
   });
-
   document.getElementById('perm-btn').addEventListener('click',async()=>{
     document.getElementById('perm').classList.remove('show');
     try{
@@ -616,7 +613,7 @@
     }catch(e){
       document.getElementById('status-dot').classList.add('error');
       document.querySelector('#perm p').textContent=
-        'カメラへのアクセスが拒否されました。\nSafari設定 → プライバシー → カメラ を確認してください。';
+        'カメラへのアクセスが拒否されました。\nSafari設定→プライバシー→カメラ を確認してください。';
       document.getElementById('perm').classList.add('show');
     }
   });
@@ -625,7 +622,7 @@
   if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
 
   loadModel().catch(e=>{
-    document.getElementById('splash-msg').textContent='モデルの読み込みに失敗しました';
+    document.getElementById('splash-msg').textContent='モデルの読み込みに失敗しました: '+e.message;
     document.getElementById('status-dot').classList.add('error');
     console.error(e);
   });
