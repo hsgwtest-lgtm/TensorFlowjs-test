@@ -1,0 +1,790 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+  <title>FACE — 顔メッシュ検出</title>
+
+  <link rel="manifest" href="manifest.json"/>
+  <meta name="theme-color" content="#0a0a0f"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black"/>
+  <meta name="apple-mobile-web-app-title" content="FACE"/>
+  <link rel="apple-touch-icon" href="icon-192.png"/>
+
+  <!--
+    ── runtime:'mediapipe' スタック ────────────────────────────────────────
+    TF.js tfjs-runtime は mobile Safari で全 keypoints が NaN になるバグがある。
+    @mediapipe/face_mesh WASM を先にロードし runtime:'mediapipe' を使うことで
+    座標が必ず有効な pixel 値として返ってくる。
+    flipHorizontal は estimateHands/Faces に渡すと NaN バグを引き起こすため、
+    常に false を渡し、フロントカメラ時は手動で x 座標をミラー反転する。
+    ────────────────────────────────────────────────────────────────────────
+  -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/face_mesh.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.10.0/dist/tf-core.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.10.0/dist/tf-backend-webgl.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@1.0.5/dist/face-landmarks-detection.min.js"></script>
+
+  <style>
+    :root {
+      --bg:      #0a0a0f;
+      --oval:    #4a9eff;
+      --eye:     #00e676;
+      --brow:    #ffb800;
+      --lip:     #ff6b6b;
+      --nose:    #c084fc;
+      --iris:    #00e5ff;
+      --mesh:    rgba(74,158,255,0.18);
+      --safe-t:  env(safe-area-inset-top,0px);
+      --safe-b:  env(safe-area-inset-bottom,0px);
+    }
+    *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+    html,body{width:100%;height:100dvh;overflow:hidden;background:var(--bg);
+      font-family:'Helvetica Neue','Hiragino Sans',sans-serif;}
+
+    #video {position:fixed;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .5s;}
+    #video.ready  {opacity:1;}
+    #video.mirror {transform:scaleX(-1);}
+    #canvas{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:5;}
+
+    /* ── Topbar ── */
+    #topbar{
+      position:fixed;top:0;left:0;right:0;z-index:20;
+      padding:calc(var(--safe-t)+6px) 14px 6px;
+      display:flex;align-items:center;gap:8px;
+      background:linear-gradient(rgba(10,10,15,.88),transparent);
+    }
+    .logo{font-size:15px;font-weight:700;letter-spacing:4px;color:#fff;}
+    .sub {font-size:10px;color:rgba(255,255,255,.4);letter-spacing:2px;margin-left:-4px;}
+    .spacer{flex:1;}
+    #cam-btn{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);
+      color:#fff;font-size:16px;padding:4px 10px;cursor:pointer;border-radius:6px;line-height:1;}
+    #mesh-btn{background:rgba(255,255,255,.08);border:1px solid rgba(74,158,255,.4);
+      color:rgba(74,158,255,.8);font-size:10px;padding:4px 8px;cursor:pointer;
+      border-radius:6px;letter-spacing:1px;}
+    #mesh-btn.active{background:rgba(74,158,255,.2);color:#4af;border-color:#4af;}
+    #dbg-btn{background:rgba(255,255,255,.08);border:1px solid rgba(0,188,212,.4);
+      color:rgba(0,188,212,.8);font-size:10px;padding:4px 8px;cursor:pointer;
+      border-radius:6px;letter-spacing:1px;}
+    #dbg-btn.active{background:rgba(0,188,212,.2);color:#0ff;border-color:#0ff;}
+    #fps-box{font-size:11px;color:rgba(255,255,255,.6);padding:3px 8px;
+      border:1px solid rgba(255,255,255,.15);border-radius:4px;
+      font-family:'Courier New',monospace;letter-spacing:1px;}
+    #status-dot{width:8px;height:8px;border-radius:50%;background:#00e676;
+      box-shadow:0 0 6px #00e676;animation:blink 1.5s infinite;}
+    #status-dot.loading{background:#ffb800;box-shadow:0 0 6px #ffb800;}
+    #status-dot.error  {background:#ff3a3a;box-shadow:0 0 6px #ff3a3a;animation:none;}
+    @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+    /* ── Debug ── */
+    #debug-panel{
+      display:none;position:fixed;bottom:110px;left:8px;right:8px;z-index:30;
+      background:rgba(0,0,0,.93);border:1px solid rgba(0,188,212,.6);border-radius:8px;
+      padding:10px 12px;font-family:'Courier New',monospace;font-size:10.5px;
+      color:#0ff;line-height:1.7;max-height:220px;overflow-y:auto;
+    }
+    #debug-panel.show{display:block;}
+    #debug-panel .dk{color:rgba(255,255,255,.4);display:inline-block;min-width:140px;}
+    #debug-panel .dv{color:#fff;}
+    #debug-panel .dh{color:#ffb800;font-weight:bold;margin-bottom:2px;}
+
+    /* ── Score hex (left) ── */
+    #score-panel{position:fixed;top:calc(var(--safe-t)+52px);left:12px;z-index:20;
+      display:none;flex-direction:column;gap:8px;}
+    #score-panel.show{display:flex;}
+    .hex-badge{
+      width:78px;height:70px;
+      background:rgba(0,188,212,.18);border:1.5px solid rgba(0,188,212,.65);
+      clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);
+      display:flex;flex-direction:column;align-items:center;justify-content:center;
+    }
+    .hex-badge .hval{font-size:18px;font-weight:700;color:#fff;line-height:1;}
+    .hex-badge .hlbl{font-size:9px;color:rgba(0,188,212,.9);letter-spacing:1px;margin-top:2px;}
+
+    /* ── Right info panel ── */
+    #info-panel{position:fixed;top:50%;right:10px;z-index:20;transform:translateY(-50%);
+      display:none;flex-direction:column;gap:4px;}
+    #info-panel.show{display:flex;}
+    .info-section{
+      background:rgba(10,10,15,.8);border:1px solid rgba(255,255,255,.13);
+      border-radius:7px;padding:5px 9px;font-size:10px;
+      color:rgba(255,255,255,.6);white-space:nowrap;text-align:right;
+    }
+    .info-section .sec-title{font-size:9px;color:rgba(255,255,255,.3);letter-spacing:1px;margin-bottom:3px;}
+    .info-section .row{display:flex;justify-content:space-between;gap:8px;line-height:1.65;}
+    .info-section .row .lbl{color:rgba(255,255,255,.45);}
+    .info-section .row .val{color:#fff;font-weight:700;min-width:52px;text-align:right;font-family:'Courier New',monospace;}
+    .eye-c  {color:var(--eye)!important;}
+    .brow-c {color:var(--brow)!important;}
+    .lip-c  {color:var(--lip)!important;}
+    .iris-c {color:var(--iris)!important;}
+    .nose-c {color:var(--nose)!important;}
+
+    /* ── Bottom ── */
+    #bottom{position:fixed;bottom:0;left:0;right:0;z-index:20;
+      padding:8px 14px calc(var(--safe-b)+10px);
+      background:linear-gradient(transparent,rgba(10,10,15,.9));
+      display:none;flex-direction:column;gap:3px;}
+    #bottom.show{display:flex;}
+    .brow2{font-size:11px;color:rgba(255,255,255,.5);letter-spacing:1px;text-align:center;}
+    .brow2 span{font-weight:700;color:#fff;}
+    .legend-row{display:flex;justify-content:center;gap:10px;margin-top:2px;flex-wrap:wrap;}
+    .leg-item{font-size:9px;display:flex;align-items:center;gap:3px;color:rgba(255,255,255,.5);}
+    .leg-dot {width:7px;height:7px;border-radius:50%;}
+
+    /* ── Crosshair ── */
+    #crosshair{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+      pointer-events:none;z-index:6;}
+    .ch-h{position:absolute;top:50%;left:-14px;right:-14px;height:1.5px;
+      transform:translateY(-50%);background:rgba(255,255,255,.3);}
+    .ch-v{position:absolute;left:50%;top:-14px;bottom:-14px;width:1.5px;
+      transform:translateX(-50%);background:rgba(255,255,255,.3);}
+
+    /* ── Splash ── */
+    #splash{position:fixed;inset:0;z-index:100;background:var(--bg);
+      display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:40px;}
+    #splash h1{font-size:28px;letter-spacing:8px;color:#fff;font-weight:300;}
+    #splash p {font-size:12px;letter-spacing:2px;color:rgba(255,255,255,.4);text-align:center;line-height:1.8;}
+    #prog-wrap{width:200px;height:2px;background:rgba(255,255,255,.1);}
+    #prog-bar {height:100%;width:0%;background:#00bcd4;transition:width .3s;}
+    #splash-msg{font-size:11px;color:rgba(255,255,255,.45);letter-spacing:2px;}
+    #start-btn{display:none;padding:12px 36px;border:1px solid rgba(255,255,255,.3);
+      background:rgba(255,255,255,.06);color:#fff;font-size:13px;letter-spacing:4px;
+      cursor:pointer;border-radius:4px;font-family:inherit;}
+    #start-btn.show{display:block;}
+    .face-icon{font-size:48px;filter:drop-shadow(0 0 16px rgba(0,188,212,.5));}
+
+    /* ── Perm ── */
+    #perm{display:none;position:fixed;inset:0;z-index:101;background:var(--bg);
+      flex-direction:column;align-items:center;justify-content:center;gap:22px;
+      padding:40px;text-align:center;}
+    #perm.show{display:flex;}
+    #perm .icon{font-size:50px;}
+    #perm p{font-size:13px;color:rgba(255,255,255,.6);line-height:1.8;}
+    #perm-btn{padding:13px 38px;border:1px solid rgba(255,255,255,.3);
+      background:rgba(255,255,255,.08);color:#fff;font-family:inherit;
+      font-size:13px;letter-spacing:3px;cursor:pointer;border-radius:4px;}
+  </style>
+</head>
+<body>
+
+<video id="video" autoplay playsinline muted webkit-playsinline></video>
+<canvas id="canvas"></canvas>
+<div id="crosshair"><div class="ch-h"></div><div class="ch-v"></div></div>
+
+<div id="topbar">
+  <div class="logo">FACE</div><div class="sub">顔メッシュ</div>
+  <div class="spacer"></div>
+  <button id="mesh-btn">MESH</button>
+  <button id="dbg-btn">DBG</button>
+  <button id="cam-btn">⟳</button>
+  <div id="fps-box">-- FPS</div>
+  <div id="status-dot" class="loading"></div>
+</div>
+
+<div id="debug-panel"></div>
+
+<!-- Left: score badges -->
+<div id="score-panel">
+  <div class="hex-badge">
+    <div class="hval" id="expr-val">--</div>
+    <div class="hlbl">表情スコア</div>
+  </div>
+  <div class="hex-badge" id="badge2" style="display:none;">
+    <div class="hval" id="expr-val2">--</div>
+    <div class="hlbl">顔2</div>
+  </div>
+</div>
+
+<!-- Right: metrics panel -->
+<div id="info-panel">
+  <div class="info-section">
+    <div class="sec-title">目・視線</div>
+    <div class="row"><span class="lbl eye-c">左目開き</span> <span class="val" id="v-le">--%</span></div>
+    <div class="row"><span class="lbl eye-c">右目開き</span> <span class="val" id="v-re">--%</span></div>
+    <div class="row"><span class="lbl iris-c">視線X</span>   <span class="val" id="v-gx">--</span></div>
+    <div class="row"><span class="lbl iris-c">視線Y</span>   <span class="val" id="v-gy">--</span></div>
+  </div>
+  <div class="info-section">
+    <div class="sec-title">口・鼻</div>
+    <div class="row"><span class="lbl lip-c">口の開き</span> <span class="val" id="v-mo">--%</span></div>
+    <div class="row"><span class="lbl lip-c">口の幅</span>   <span class="val" id="v-mw">--%</span></div>
+    <div class="row"><span class="lbl nose-c">鼻梁角度</span><span class="val" id="v-na">--°</span></div>
+  </div>
+  <div class="info-section">
+    <div class="sec-title">顔の姿勢</div>
+    <div class="row"><span class="lbl brow-c">眉上げ左</span> <span class="val" id="v-brl">--%</span></div>
+    <div class="row"><span class="lbl brow-c">眉上げ右</span> <span class="val" id="v-brr">--%</span></div>
+    <div class="row"><span class="lbl">頭の傾き</span>         <span class="val" id="v-tilt">--°</span></div>
+    <div class="row"><span class="lbl">頭のヨー</span>         <span class="val" id="v-yaw">--°</span></div>
+  </div>
+</div>
+
+<!-- Bottom -->
+<div id="bottom">
+  <div class="brow2" id="face-info">顔を向けてください 😊</div>
+  <div class="brow2">ランドマーク <span id="v-lmcount">--</span>点 &nbsp;|&nbsp; 顔サイズ <span id="v-fsize">--%</span></div>
+  <div class="legend-row">
+    <div class="leg-item"><div class="leg-dot" style="background:var(--oval)"></div>輪郭</div>
+    <div class="leg-item"><div class="leg-dot" style="background:var(--eye)"></div>目</div>
+    <div class="leg-item"><div class="leg-dot" style="background:var(--brow)"></div>眉</div>
+    <div class="leg-item"><div class="leg-dot" style="background:var(--lip)"></div>唇</div>
+    <div class="leg-item"><div class="leg-dot" style="background:var(--nose)"></div>鼻</div>
+    <div class="leg-item"><div class="leg-dot" style="background:var(--iris)"></div>虹彩</div>
+  </div>
+</div>
+
+<!-- Splash -->
+<div id="splash">
+  <div class="face-icon">😊</div>
+  <h1>FACE</h1>
+  <p>顔メッシュ検出 · 468+10点 · リアルタイム<br>MediaPipe Face Mesh</p>
+  <div id="prog-wrap"><div id="prog-bar"></div></div>
+  <div id="splash-msg">モデルを読み込み中…</div>
+  <button id="start-btn">▶ カメラ起動</button>
+</div>
+
+<div id="perm">
+  <div class="icon">📷</div>
+  <p>カメラへのアクセスが必要です<br>次の画面で「許可」を選択してください</p>
+  <button id="perm-btn">アクセスを許可</button>
+</div>
+
+<script>
+(function(){
+  /* ────────────────────────────────────────────────────────────────────────
+   * MediaPipe Face Mesh 478 landmarks (refineLandmarks:true)
+   *  0-467  : 顔メッシュ
+   *  468-472: 左虹彩 (468=中心, 469-472=リング)
+   *  473-477: 右虹彩 (473=中心, 474-477=リング)
+   *
+   * 主要インデックス:
+   *  鼻先=1, 左目内側=133, 左目外側=33, 右目内側=362, 右目外側=263
+   *  左上まぶた=159, 左下まぶた=145, 右上まぶた=386, 右下まぶた=374
+   *  上唇=13, 下唇=14, 左口角=61, 右口角=291
+   *  左眉中央=105, 右眉中央=334
+   * ────────────────────────────────────────────────────────────────────── */
+
+  // ── カラーパレット ──
+  const C = {
+    oval:'#4a9eff', eye:'#00e676', brow:'#ffb800',
+    lipOuter:'#ff6b6b', lipInner:'#ff9999',
+    nose:'#c084fc', iris:'#00e5ff',
+    mesh:'rgba(74,158,255,0.12)',
+  };
+
+  // ── 顔の輪郭 (Face Oval) ──
+  const OVAL = [
+    10,338,297,332,284,251,389,356,454,323,361,288,
+    397,365,379,378,400,377,152,148,176,149,150,136,
+    172,58,132,93,234,127,162,21,54,103,67,109,10
+  ];
+
+  // ── 左目 ──
+  const L_EYE = [33,246,161,160,159,158,157,173,133,155,154,153,145,144,163,7,33];
+  // ── 右目 ──
+  const R_EYE = [362,398,384,385,386,387,388,466,263,249,390,373,374,380,381,382,362];
+
+  // ── 左眉 ──
+  const L_BROW = [70,63,105,66,107,55,65,52,53,46];
+  // ── 右眉 ──
+  const R_BROW = [300,293,334,296,336,285,295,282,283,276];
+
+  // ── 唇外側 ──
+  const LIPS_OUTER = [61,84,17,314,405,320,307,375,321,308,324,318,402,317,14,87,178,88,95,78,80,81,82,61];
+  // ── 唇内側 ──
+  const LIPS_INNER = [78,95,88,178,87,14,317,402,318,324,308,415,310,311,312,13,82,81,80,191,78];
+
+  // ── 鼻梁 + 小鼻 ──
+  const NOSE_BRIDGE  = [168,6,197,195,5,4,1];
+  const NOSE_BOTTOM  = [294,278,344,440,275,4,45,220,115,48,64,98,240,99,2,328,460];
+
+  // ── メッシュ (簡略三角形サブセット 約200三角) ──
+  // 主要ゾーン頂点の簡略接続線
+  const MESH_LINES = [
+    // 頬ゾーン
+    [117,118],[118,101],[101,36],[36,205],[205,187],[187,123],[123,117],
+    [346,347],[347,330],[330,266],[266,425],[425,411],[411,352],[352,346],
+    // おでこゾーン
+    [21,54],[54,103],[103,67],[67,109],[109,10],[10,338],[338,297],[297,332],[332,284],[284,251],[251,389],[389,21],
+    // 鼻周辺
+    [49,48],[48,64],[64,98],[98,240],[240,99],[99,2],[2,328],[328,460],[460,115],[115,220],[220,45],[45,49],
+    // 口周辺
+    [39,37],[37,0],[0,267],[267,269],[269,270],[270,409],[409,39],
+    [185,40],[40,92],[92,165],[165,167],[167,164],[164,393],[393,391],[391,322],[322,410],[410,432],[432,185],
+  ];
+
+  // ── 左虹彩リング接続 ──
+  const L_IRIS_RING = [[468,469],[469,470],[470,471],[471,472],[472,469]];
+  const R_IRIS_RING = [[473,474],[474,475],[475,476],[476,477],[477,474]];
+
+  // ── NaN-safe math ──
+  function valid(p){ return p!=null&&typeof p.x==='number'&&!isNaN(p.x)&&!isNaN(p.y); }
+  function dist(a,b){ if(!valid(a)||!valid(b)) return 0; return Math.sqrt((a.x-b.x)**2+(a.y-b.y)**2); }
+  function midpoint(a,b){ return {x:(a.x+b.x)/2, y:(a.y+b.y)/2}; }
+
+  // EAR (Eye Aspect Ratio) → 0-100%
+  function eyeOpen(kps, topI, botI, leftI, rightI){
+    const v=dist(kps[topI],kps[botI]);
+    const h=dist(kps[leftI],kps[rightI]);
+    if(!h) return null;
+    return Math.min(100,Math.round(v/h*100*2.5));
+  }
+
+  // Gaze from iris center relative to eye corners (-100=左/上, 0=中央, 100=右/下)
+  function gazeX(kps, irisIdx, leftI, rightI){
+    if(!valid(kps[irisIdx])||!valid(kps[leftI])||!valid(kps[rightI])) return null;
+    const ex=kps[leftI].x, ew=kps[rightI].x-ex;
+    if(Math.abs(ew)<1) return null;
+    return Math.round(((kps[irisIdx].x-ex)/ew-0.5)*200);
+  }
+  function gazeY(kps, irisIdx, topI, botI){
+    if(!valid(kps[irisIdx])||!valid(kps[topI])||!valid(kps[botI])) return null;
+    const ey=kps[topI].y, eh=kps[botI].y-ey;
+    if(Math.abs(eh)<1) return null;
+    return Math.round(((kps[irisIdx].y-ey)/eh-0.5)*200);
+  }
+
+  // 口の開き MAR
+  function mouthOpen(kps){
+    const v=dist(kps[13],kps[14]);
+    const h=dist(kps[61],kps[291]);
+    if(!h) return null;
+    return Math.min(100,Math.round(v/h*200));
+  }
+  function mouthWidth(kps, faceW){
+    if(!faceW) return null;
+    const h=dist(kps[61],kps[291]);
+    return Math.round(h/faceW*100);
+  }
+
+  // 眉の上げ率 (眉中央 y と 目上端 y の距離 / 顔高さ)
+  function browRaise(kps, browI, eyeTopI, faceH){
+    if(!valid(kps[browI])||!valid(kps[eyeTopI])||!faceH) return null;
+    const d=kps[eyeTopI].y-kps[browI].y; // 正 = 眉が目より上
+    return Math.max(0,Math.min(100,Math.round(d/faceH*300)));
+  }
+
+  // 頭の傾き (roll): 両目中心の水平角度
+  function headRoll(kps){
+    const lc=midpoint(kps[33],kps[133]);
+    const rc=midpoint(kps[362],kps[263]);
+    if(!valid(lc)||!valid(rc)) return null;
+    return Math.round(Math.atan2(rc.y-lc.y, rc.x-lc.x)*180/Math.PI);
+  }
+
+  // 頭のヨー推定: 鼻先と顔中心の横ずれ
+  function headYaw(kps, faceW){
+    if(!valid(kps[1])||!valid(kps[33])||!valid(kps[263])||!faceW) return null;
+    const cx=(kps[33].x+kps[263].x)/2;
+    return Math.round((kps[1].x-cx)/faceW*180);
+  }
+
+  // 鼻梁の縦角度
+  function noseAngle(kps){
+    if(!valid(kps[168])||!valid(kps[1])) return null;
+    const deg=Math.atan2(kps[1].x-kps[168].x, kps[1].y-kps[168].y)*180/Math.PI;
+    return isNaN(deg)?null:Math.round(deg);
+  }
+
+  // 表情スコア (目開き・口・眉・対称性から)
+  function exprScore(le,re,mo,brl,brr,roll){
+    let s=50;
+    if(le!==null&&re!==null) s+=(le+re)/2*0.15;
+    if(mo!==null) s+=mo*0.1;
+    if(brl!==null&&brr!==null) s+=(brl+brr)/2*0.1;
+    if(roll!==null) s-=Math.abs(roll)*0.3;
+    return Math.max(0,Math.min(100,Math.round(s)));
+  }
+
+  // runtime:'mediapipe' は正規化座標 [0,1] を返すのでピクセルにスケール
+  function scaleKps(kps, cw, ch){
+    const max=kps.reduce((m,p)=>p&&p.x>m?p.x:m,0);
+    if(max>2) return kps; // already pixel
+    return kps.map(p=> p?{...p,x:p.x*cw,y:p.y*ch}:p);
+  }
+  // フロントカメラ: x をミラー反転
+  function applyMirror(kps, cw, doFlip){
+    if(!doFlip) return kps;
+    return kps.map(p=> p?{...p,x:cw-p.x}:p);
+  }
+
+  // ── State ──
+  let detector=null, stream=null, animId=null, running=false;
+  let facingMode='user', lastTime=0, fpsArr=[];
+  let showMesh=false, debugMode=false;
+
+  const video  = document.getElementById('video');
+  const canvas = document.getElementById('canvas');
+  const ctx    = canvas.getContext('2d');
+  const dbgEl  = document.getElementById('debug-panel');
+
+  document.getElementById('mesh-btn').addEventListener('click',()=>{
+    showMesh=!showMesh;
+    document.getElementById('mesh-btn').classList.toggle('active',showMesh);
+  });
+  document.getElementById('dbg-btn').addEventListener('click',()=>{
+    debugMode=!debugMode;
+    dbgEl.classList.toggle('show',debugMode);
+    document.getElementById('dbg-btn').classList.toggle('active',debugMode);
+  });
+
+  function updateDebug(faces,vw,vh){
+    if(!debugMode) return;
+    let html=`<div class="dh">─── DEBUG (mediapipe Face Mesh) ───</div>`;
+    html+=`<div><span class="dk">video size</span><span class="dv">${vw}×${vh}</span></div>`;
+    html+=`<div><span class="dk">facingMode</span><span class="dv">${facingMode}</span></div>`;
+    html+=`<div><span class="dk">faces found</span><span class="dv">${faces.length}</span></div>`;
+    if(faces.length){
+      const f=faces[0]; const raw=f.keypoints||[];
+      const p0=raw[0]||{}, p1=raw[1]||{};
+      html+=`<div><span class="dk">keypoints.len</span><span class="dv">${raw.length}</span></div>`;
+      html+=`<div><span class="dk">kp[0] raw</span><span class="dv">x:${p0.x?.toFixed(4)||'?'} y:${p0.y?.toFixed(4)||'?'}</span></div>`;
+      html+=`<div><span class="dk">kp[1] nose</span><span class="dv">x:${p1.x?.toFixed(4)||'?'} y:${p1.y?.toFixed(4)||'?'}</span></div>`;
+      const nan=isNaN(p0.x);
+      html+=`<div><span class="dk">coords valid?</span><span class="dv" style="color:${nan?'#f66':'#0f6'}">${nan?'NaN — BROKEN':'OK ✓'}</span></div>`;
+      if(raw[468]) html+=`<div><span class="dk">kp[468] L-iris</span><span class="dv">x:${raw[468].x?.toFixed(4)} y:${raw[468].y?.toFixed(4)}</span></div>`;
+    }
+    dbgEl.innerHTML=html;
+  }
+
+  // ── Load model (runtime:'mediapipe') ──
+  async function loadModel(){
+    const bar=document.getElementById('prog-bar');
+    const msg=document.getElementById('splash-msg');
+    bar.style.width='15%'; msg.textContent='MediaPipe初期化中…';
+    try{
+      detector = await faceLandmarksDetection.createDetector(
+        faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
+        {
+          runtime: 'mediapipe',
+          solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619',
+          refineLandmarks: true,  // 虹彩 (468-477) を有効化
+          maxFaces: 2,
+        }
+      );
+      bar.style.width='90%'; msg.textContent='準備完了 — 468+10点 Face Mesh';
+    }catch(e){
+      console.warn('mediapipe runtime 失敗, tfjs fallback:', e);
+      bar.style.width='50%'; msg.textContent='フォールバック中…';
+      await tf.setBackend('webgl'); await tf.ready();
+      detector = await faceLandmarksDetection.createDetector(
+        faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
+        { runtime:'tfjs', refineLandmarks:true, maxFaces:2 }
+      );
+      bar.style.width='90%'; msg.textContent='準備完了 (tfjs fallback)';
+    }
+    await new Promise(r=>setTimeout(r,400));
+    bar.style.width='100%';
+    await new Promise(r=>setTimeout(r,150));
+    document.getElementById('start-btn').classList.add('show');
+    msg.textContent='タップして開始';
+  }
+
+  // ── Camera ──
+  async function startCamera(){
+    if(stream) stream.getTracks().forEach(t=>t.stop());
+    stream = await navigator.mediaDevices.getUserMedia({
+      video:{ facingMode:{ideal:facingMode}, width:{ideal:1280}, height:{ideal:720} },
+      audio:false
+    });
+    video.srcObject=stream;
+    await new Promise(r=>{ video.onloadedmetadata=r; });
+    // Safari: readyState 待機
+    await new Promise(r=>{
+      if(video.readyState>=2){ r(); return; }
+      video.oncanplay=r;
+    });
+    video.play();
+    resizeCanvas();
+    video.classList.add('ready');
+    video.classList.toggle('mirror', facingMode==='user');
+  }
+
+  function resizeCanvas(){
+    canvas.width  = video.videoWidth  || window.innerWidth;
+    canvas.height = video.videoHeight || window.innerHeight;
+  }
+
+  // ── Main loop ──
+  async function loop(){
+    if(!running) return;
+    const now=performance.now(),dt=now-lastTime; lastTime=now;
+    if(dt>0){
+      fpsArr.push(1000/dt); if(fpsArr.length>8) fpsArr.shift();
+      document.getElementById('fps-box').textContent=
+        Math.round(fpsArr.reduce((a,b)=>a+b)/fpsArr.length)+' FPS';
+    }
+    let faces=[];
+    try{
+      // !! flipHorizontal は常に false — NaN バグ回避 !!
+      faces = await detector.estimateFaces(video, { flipHorizontal:false });
+    }catch(e){ console.warn(e); }
+    draw(faces);
+    animId=requestAnimationFrame(loop);
+  }
+
+  // ── Draw ──
+  function draw(faces){
+    const vw=video.videoWidth, vh=video.videoHeight;
+    if(!vw||!vh) return;
+    if(canvas.width!==vw||canvas.height!==vh) resizeCanvas();
+    ctx.clearRect(0,0,vw,vh);
+
+    updateDebug(faces,vw,vh);
+
+    const scoreEl=document.getElementById('score-panel');
+    const infoEl =document.getElementById('info-panel');
+    const botEl  =document.getElementById('bottom');
+
+    if(!faces||!faces.length){
+      scoreEl.classList.remove('show'); infoEl.classList.remove('show'); botEl.classList.remove('show');
+      document.getElementById('face-info').textContent='顔を向けてください 😊';
+      return;
+    }
+    scoreEl.classList.add('show'); infoEl.classList.add('show'); botEl.classList.add('show');
+    document.getElementById('badge2').style.display=faces.length>1?'flex':'none';
+
+    const needMirror=(facingMode==='user');
+
+    faces.forEach((face,fi)=>{
+      const raw = face.keypoints||[];
+      let kps = scaleKps(raw, vw, vh);
+      kps = applyMirror(kps, vw, needMirror);
+
+      // ── ヘルパー: インデックスリストを折れ線として描画 ──
+      function drawPolyline(indices, col, lw, close=false){
+        ctx.beginPath();
+        let started=false;
+        indices.forEach(i=>{
+          const p=kps[i];
+          if(!valid(p)) return;
+          if(!started){ ctx.moveTo(p.x,p.y); started=true; }
+          else ctx.lineTo(p.x,p.y);
+        });
+        if(close&&started) ctx.closePath();
+        ctx.strokeStyle=col; ctx.lineWidth=lw;
+        ctx.shadowColor=col; ctx.shadowBlur=4; ctx.stroke(); ctx.shadowBlur=0;
+      }
+      function drawDot(i, col, r){
+        const p=kps[i]; if(!valid(p)) return;
+        ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2);
+        ctx.fillStyle=col; ctx.shadowColor=col; ctx.shadowBlur=8; ctx.fill(); ctx.shadowBlur=0;
+      }
+      function drawLines(pairs, col, lw){
+        pairs.forEach(([a,b])=>{
+          const pa=kps[a],pb=kps[b];
+          if(!valid(pa)||!valid(pb)) return;
+          ctx.beginPath(); ctx.moveTo(pa.x,pa.y); ctx.lineTo(pb.x,pb.y);
+          ctx.strokeStyle=col; ctx.lineWidth=lw;
+          ctx.shadowColor=col; ctx.shadowBlur=3; ctx.stroke(); ctx.shadowBlur=0;
+        });
+      }
+
+      ctx.lineCap='round'; ctx.lineJoin='round';
+
+      // ── メッシュ (オプション) ──
+      if(showMesh){
+        ctx.globalAlpha=0.5;
+        drawLines(MESH_LINES, C.mesh, 0.8);
+        ctx.globalAlpha=1;
+      }
+
+      // ── 顔輪郭 ──
+      drawPolyline(OVAL, C.oval, 2, true);
+
+      // ── 目 ──
+      drawPolyline(L_EYE, C.eye, 2, true);
+      drawPolyline(R_EYE, C.eye, 2, true);
+
+      // ── 眉 ──
+      drawPolyline(L_BROW, C.brow, 2);
+      drawPolyline(R_BROW, C.brow, 2);
+
+      // ── 唇 ──
+      drawPolyline(LIPS_OUTER, C.lipOuter, 2.5, true);
+      drawPolyline(LIPS_INNER, C.lipInner, 1.5, true);
+
+      // ── 鼻 ──
+      drawPolyline(NOSE_BRIDGE, C.nose, 1.5);
+      drawPolyline(NOSE_BOTTOM, C.nose, 1.5);
+
+      // ── 虹彩 (468-477) ──
+      if(kps.length>477){
+        // 左虹彩
+        drawLines(L_IRIS_RING, C.iris, 2);
+        drawDot(468, C.iris, 3);
+        // 右虹彩
+        drawLines(R_IRIS_RING, C.iris, 2);
+        drawDot(473, C.iris, 3);
+
+        // 視線方向ベクター
+        ctx.globalAlpha=0.7;
+        function drawGazeArrow(irisIdx, leftI, rightI){
+          const ip=kps[irisIdx]; const lp=kps[leftI]; const rp=kps[rightI];
+          if(!valid(ip)||!valid(lp)||!valid(rp)) return;
+          const cx=(lp.x+rp.x)/2, cy=(lp.y+rp.y)/2;
+          const dx=(ip.x-cx)*3, dy=(ip.y-cy)*3;
+          const len=Math.sqrt(dx*dx+dy*dy);
+          if(len<0.5) return;
+          ctx.beginPath();
+          ctx.moveTo(cx,cy); ctx.lineTo(cx+dx,cy+dy);
+          ctx.strokeStyle=C.iris; ctx.lineWidth=2;
+          ctx.shadowBlur=0; ctx.stroke();
+        }
+        drawGazeArrow(468, 33, 133);
+        drawGazeArrow(473, 362, 263);
+        ctx.globalAlpha=1;
+      }
+
+      // ── ランドマーク点 (主要部位のみ) ──
+      const KEY_DOTS = [
+        ...L_EYE.slice(0,8), ...R_EYE.slice(0,8),
+        61,291,13,14, // 口
+        1, 4, // 鼻
+        105,334, // 眉中央
+      ];
+      KEY_DOTS.forEach(i=>{
+        const p=kps[i]; if(!valid(p)) return;
+        let col=C.oval;
+        if(i>=33&&i<=163||i>=362&&i<=466) col=C.eye;
+        else if(i===61||i===291||i===13||i===14) col=C.lipOuter;
+        else if(i===1||i===4) col=C.nose;
+        else if(i===105||i===334) col=C.brow;
+        ctx.beginPath(); ctx.arc(p.x,p.y,2.5,0,Math.PI*2);
+        ctx.fillStyle=col; ctx.fill();
+      });
+
+      // ── 角度ラベル ──
+      ctx.font='bold 11px "Helvetica Neue",sans-serif';
+      ctx.textBaseline='middle';
+      function canvasLabel(pt, text, col){
+        if(!valid(pt)||text===null) return;
+        const x=pt.x+8, y=pt.y-8;
+        const w=ctx.measureText(text).width+8;
+        ctx.fillStyle='rgba(0,0,0,.65)'; ctx.fillRect(x-4,y-8,w,17);
+        ctx.fillStyle=col; ctx.fillText(text,x,y);
+      }
+
+      // ── メトリクス計算 ──
+      const faceW=dist(kps[33],kps[263]);
+      const faceH=dist(kps[10],kps[152]);
+
+      const leOpen = eyeOpen(kps,159,145,33,133);
+      const reOpen = eyeOpen(kps,386,374,362,263);
+      const moOpen = mouthOpen(kps);
+      const moWide = mouthWidth(kps,faceW);
+      const brlRaise= browRaise(kps,105,159,faceH);
+      const brrRaise= browRaise(kps,334,386,faceH);
+      const roll    = headRoll(kps);
+      const yaw     = headYaw(kps,faceW);
+      const nAngle  = noseAngle(kps);
+      const score   = exprScore(leOpen,reOpen,moOpen,brlRaise,brrRaise,roll);
+
+      // 視線 (虹彩がある場合のみ)
+      let gx=null, gy=null;
+      if(kps.length>477){
+        const lgx=gazeX(kps,468,33,133);
+        const rgx=gazeX(kps,473,362,263);
+        const lgy=gazeY(kps,468,159,145);
+        const rgy=gazeY(kps,473,386,374);
+        if(lgx!==null&&rgx!==null) gx=Math.round((lgx+rgx)/2);
+        if(lgy!==null&&rgy!==null) gy=Math.round((lgy+rgy)/2);
+      }
+
+      // 顔サイズ % (顔幅 / ビデオ幅)
+      const fsizePct = faceW ? Math.round(faceW/vw*100) : null;
+
+      // キャンバスラベル
+      canvasLabel(kps[159], leOpen!==null?leOpen+'%':null, C.eye);
+      canvasLabel(kps[386], reOpen!==null?reOpen+'%':null, C.eye);
+      canvasLabel(kps[13],  moOpen!==null?moOpen+'%':null, C.lipOuter);
+      if(roll!==null && valid(kps[10])){
+        canvasLabel(kps[10], roll+'°', C.oval);
+      }
+      if(kps.length>477 && valid(kps[468])){
+        const gxLabel = gx!==null?(gx>10?'→':gx<-10?'←':'↔'):'?';
+        const gyLabel = gy!==null?(gy>10?'↓':gy<-10?'↑':'—'):'?';
+        canvasLabel(kps[468], gxLabel+gyLabel, C.iris);
+      }
+
+      // ── DOM 更新 ──
+      if(fi===0){
+        document.getElementById('expr-val').textContent=score;
+        function sv(id,v,suf=''){
+          document.getElementById(id).textContent= v!==null ? v+suf : '--'+(suf||'');
+        }
+        sv('v-le', leOpen, '%'); sv('v-re', reOpen, '%');
+        sv('v-mo', moOpen, '%'); sv('v-mw', moWide, '%');
+        sv('v-na', nAngle, '°');
+        sv('v-brl', brlRaise, '%'); sv('v-brr', brrRaise, '%');
+        sv('v-tilt', roll, '°'); sv('v-yaw', yaw, '°');
+        sv('v-lmcount', kps.length, '');
+        sv('v-fsize', fsizePct, '%');
+
+        // 視線テキスト
+        function gazeLabel(v){
+          if(v===null) return '--';
+          if(v>30) return v+'→';
+          if(v<-30) return v+'←';
+          return v+'↔';
+        }
+        function gazeYLabel(v){
+          if(v===null) return '--';
+          if(v>30) return v+'↓';
+          if(v<-30) return v+'↑';
+          return v+'—';
+        }
+        document.getElementById('v-gx').textContent = gazeLabel(gx);
+        document.getElementById('v-gy').textContent = gazeYLabel(gy);
+      }
+      if(fi===1){
+        document.getElementById('expr-val2').textContent=score;
+      }
+    });
+
+    document.getElementById('face-info').textContent=
+      faces.length+'人の顔を検出中';
+  }
+
+  // ── Controls ──
+  document.getElementById('cam-btn').addEventListener('click',async()=>{
+    facingMode=facingMode==='environment'?'user':'environment';
+    if(running){
+      cancelAnimationFrame(animId);
+      await startCamera();
+      lastTime=0; fpsArr=[];
+      animId=requestAnimationFrame(loop);
+    }
+  });
+  document.getElementById('start-btn').addEventListener('click',()=>{
+    document.getElementById('splash').style.display='none';
+    document.getElementById('perm').classList.add('show');
+  });
+  document.getElementById('perm-btn').addEventListener('click',async()=>{
+    document.getElementById('perm').classList.remove('show');
+    try{
+      await startCamera(); running=true;
+      document.getElementById('status-dot').classList.remove('loading');
+      lastTime=performance.now(); animId=requestAnimationFrame(loop);
+    }catch(e){
+      document.getElementById('status-dot').classList.add('error');
+      document.querySelector('#perm p').textContent=
+        'カメラへのアクセスが拒否されました。\nSafari設定→プライバシー→カメラ を確認してください。';
+      document.getElementById('perm').classList.add('show');
+    }
+  });
+
+  window.addEventListener('resize',resizeCanvas);
+  if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+
+  loadModel().catch(e=>{
+    document.getElementById('splash-msg').textContent='読み込み失敗: '+e.message;
+    document.getElementById('status-dot').classList.add('error');
+    console.error(e);
+  });
+})();
+</script>
+</body>
+</html>
