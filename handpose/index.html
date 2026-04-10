@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="HAND">
+<meta name="theme-color" content="#000000">
+<title>HAND – 手の骨格検知</title>
+<link rel="manifest" href="manifest.json">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --thumb:  #ff4dff;
+    --index:  #4d9fff;
+    --middle: #4dff88;
+    --ring:   #ffe04d;
+    --pinky:  #c44dff;
+    --bg: rgba(0,0,0,0.72);
+    --panel: rgba(10,10,10,0.82);
+    --border: rgba(255,255,255,0.12);
+    --text: #ffffff;
+    --sub: rgba(255,255,255,0.6);
+    --font-mono: 'SF Mono', 'Fira Code', 'Courier New', monospace;
+    --font-ui: -apple-system, 'Hiragino Sans', sans-serif;
+  }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: #000;
+    overflow: hidden;
+    font-family: var(--font-ui);
+    color: var(--text);
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  #app {
+    position: relative;
+    width: 100vw; height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  video {
+    position: absolute;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    transform: scaleX(-1);
+  }
+
+  canvas#overlay {
+    position: absolute;
+    width: 100%; height: 100%;
+    transform: scaleX(-1);
+    pointer-events: none;
+  }
+
+  /* ── TOP BAR ── */
+  #top-bar {
+    position: absolute;
+    top: env(safe-area-inset-top, 12px);
+    left: 0; right: 0;
+    display: flex; align-items: flex-start; justify-content: space-between;
+    padding: 12px 16px 0;
+    z-index: 10;
+  }
+
+  #hand-label {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 8px 14px;
+    display: flex; flex-direction: column; align-items: center;
+    gap: 2px;
+    backdrop-filter: blur(12px);
+  }
+  #hand-label .title-row {
+    display: flex; align-items: center; gap: 6px;
+  }
+  #hand-label .title-row span.h { font-size: 13px; font-weight: 700; letter-spacing: 2px; color: var(--sub); }
+  #hand-label .title-row span.a { font-size: 13px; font-weight: 700; letter-spacing: 2px; color: var(--index); }
+  #hand-label .title-row span.n { font-size: 13px; font-weight: 700; letter-spacing: 2px; color: var(--middle); }
+  #hand-label .title-row span.d { font-size: 13px; font-weight: 700; letter-spacing: 2px; color: var(--ring); }
+  #hand-label .emoji { font-size: 22px; line-height: 1; }
+  #hand-label .gesture { font-size: 11px; color: var(--sub); margin-top: 2px; }
+
+  #fps-box {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 6px 12px;
+    display: flex; align-items: center; gap: 6px;
+    backdrop-filter: blur(12px);
+  }
+  #fps-box .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: #4dff88;
+    box-shadow: 0 0 6px #4dff88;
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  #fps-box .fps-num { font-family: var(--font-mono); font-size: 13px; font-weight: 600; }
+  #fps-box .fps-unit { font-size: 11px; color: var(--sub); }
+
+  /* ── RIGHT PANEL ── */
+  #right-panel {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex; flex-direction: column; gap: 5px;
+    z-index: 10;
+    min-width: 178px;
+  }
+
+  .finger-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 6px 10px;
+    backdrop-filter: blur(12px);
+  }
+  .finger-card .f-name {
+    font-size: 10px; font-weight: 700; letter-spacing: 1.5px;
+    text-transform: uppercase; margin-bottom: 3px;
+  }
+  .finger-card.thumb .f-name  { color: var(--thumb); }
+  .finger-card.index .f-name  { color: var(--index); }
+  .finger-card.middle .f-name { color: var(--middle); }
+  .finger-card.ring .f-name   { color: var(--ring); }
+  .finger-card.pinky .f-name  { color: var(--pinky); }
+
+  .finger-card .f-angles {
+    font-family: var(--font-mono);
+    font-size: 11px; color: var(--sub);
+    display: flex; flex-wrap: wrap; gap: 4px;
+  }
+  .finger-card .f-angles span { white-space: nowrap; }
+  .finger-card .f-angles b { color: var(--text); font-weight: 600; }
+
+  /* ── BOTTOM BAR ── */
+  #bottom-bar {
+    position: absolute;
+    bottom: env(safe-area-inset-bottom, 12px);
+    left: 0; right: 0;
+    padding: 0 12px 12px;
+    display: flex; flex-direction: column; gap: 6px;
+    z-index: 10;
+  }
+
+  #openness-row {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 8px 14px;
+    display: flex; align-items: center; gap: 14px;
+    backdrop-filter: blur(12px);
+  }
+  .stat-item { display: flex; align-items: baseline; gap: 4px; }
+  .stat-item .lbl { font-size: 10px; color: var(--sub); letter-spacing: 0.5px; }
+  .stat-item .val { font-family: var(--font-mono); font-size: 14px; font-weight: 700; }
+  .sep { width: 1px; height: 18px; background: var(--border); }
+
+  #spread-row {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 7px 14px;
+    display: flex; align-items: center; justify-content: space-around;
+    backdrop-filter: blur(12px);
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+  .spread-item { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .spread-item .s-lbl { font-size: 9px; color: var(--sub); }
+  .spread-item .s-val { font-weight: 600; font-size: 12px; }
+
+  /* ── HAND NAME ON CANVAS ── */
+  #hand-side {
+    position: absolute;
+    font-size: 20px; font-weight: 700;
+    text-shadow: 0 0 8px rgba(0,0,0,0.8);
+    pointer-events: none;
+    z-index: 8;
+    transition: left 0.1s, top 0.1s;
+    display: none;
+  }
+
+  /* ── START OVERLAY ── */
+  #start-overlay {
+    position: absolute; inset: 0;
+    background: rgba(0,0,0,0.88);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 20px; z-index: 99;
+    backdrop-filter: blur(4px);
+  }
+  #start-overlay .big-emoji { font-size: 72px; }
+  #start-overlay h1 { font-size: 28px; font-weight: 800; letter-spacing: 3px; }
+  #start-overlay p { font-size: 14px; color: var(--sub); text-align: center; line-height: 1.6; padding: 0 32px; }
+  #start-btn {
+    background: linear-gradient(135deg, #4d9fff, #c44dff);
+    border: none; border-radius: 50px;
+    padding: 14px 40px;
+    font-size: 16px; font-weight: 700; color: #fff;
+    cursor: pointer; letter-spacing: 1px;
+    box-shadow: 0 0 30px rgba(77,159,255,0.4);
+    transition: transform 0.15s, box-shadow 0.15s;
+  }
+  #start-btn:active { transform: scale(0.96); box-shadow: 0 0 15px rgba(77,159,255,0.2); }
+</style>
+</head>
+<body>
+<div id="app">
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="overlay"></canvas>
+
+  <!-- Hand side label positioned by JS -->
+  <div id="hand-side">右手</div>
+
+  <!-- TOP BAR -->
+  <div id="top-bar">
+    <div id="hand-label">
+      <div class="title-row">
+        <span class="h">H</span><span class="a">A</span><span class="n">N</span><span class="d">D</span>
+        <span class="emoji">✋</span>
+      </div>
+      <div class="gesture" id="gesture-name">バー</div>
+    </div>
+    <div id="fps-box">
+      <div class="dot"></div>
+      <span class="fps-num" id="fps-num">--</span>
+      <span class="fps-unit">FPS</span>
+    </div>
+  </div>
+
+  <!-- RIGHT PANEL -->
+  <div id="right-panel">
+    <div class="finger-card thumb">
+      <div class="f-name">THUMB 親</div>
+      <div class="f-angles">
+        <span>CMC <b id="t-cmc">---</b>°</span>
+        <span>MCP <b id="t-mcp">---</b>°</span>
+        <span>IP <b id="t-ip">---</b>°</span>
+      </div>
+    </div>
+    <div class="finger-card index">
+      <div class="f-name">INDEX 人</div>
+      <div class="f-angles">
+        <span>MCP <b id="i-mcp">---</b>°</span>
+        <span>PIP <b id="i-pip">---</b>°</span>
+        <span>DIP <b id="i-dip">---</b>°</span>
+      </div>
+    </div>
+    <div class="finger-card middle">
+      <div class="f-name">MIDDLE 中</div>
+      <div class="f-angles">
+        <span>MCP <b id="m-mcp">---</b>°</span>
+        <span>PIP <b id="m-pip">---</b>°</span>
+        <span>DIP <b id="m-dip">---</b>°</span>
+      </div>
+    </div>
+    <div class="finger-card ring">
+      <div class="f-name">RING 薬</div>
+      <div class="f-angles">
+        <span>MCP <b id="r-mcp">---</b>°</span>
+        <span>PIP <b id="r-pip">---</b>°</span>
+        <span>DIP <b id="r-dip">---</b>°</span>
+      </div>
+    </div>
+    <div class="finger-card pinky">
+      <div class="f-name">PINKY 小</div>
+      <div class="f-angles">
+        <span>MCP <b id="p-mcp">---</b>°</span>
+        <span>PIP <b id="p-pip">---</b>°</span>
+        <span>DIP <b id="p-dip">---</b>°</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- BOTTOM BAR -->
+  <div id="bottom-bar">
+    <div id="openness-row">
+      <div class="stat-item">
+        <span class="lbl">開度</span>
+        <span class="val" id="openness">--%</span>
+      </div>
+      <div class="sep"></div>
+      <div class="stat-item">
+        <span class="lbl">手首角</span>
+        <span class="val" id="wrist-angle">--°</span>
+      </div>
+    </div>
+    <div id="spread-row">
+      <div class="spread-item">
+        <span class="s-lbl">親↔人</span>
+        <span class="s-val" id="sp-ti">--°</span>
+      </div>
+      <div class="spread-item">
+        <span class="s-lbl">人↔中</span>
+        <span class="s-val" id="sp-im">--°</span>
+      </div>
+      <div class="spread-item">
+        <span class="s-lbl">中↔薬</span>
+        <span class="s-val" id="sp-mr">--°</span>
+      </div>
+      <div class="spread-item">
+        <span class="s-lbl">薬↔小</span>
+        <span class="s-val" id="sp-rp">--°</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- START OVERLAY -->
+  <div id="start-overlay">
+    <div class="big-emoji">✋</div>
+    <h1>HAND</h1>
+    <p>カメラを使用して手の骨格をリアルタイムで検知します。<br>カメラへのアクセスを許可してください。</p>
+    <button id="start-btn" onclick="startApp()">カメラを起動</button>
+  </div>
+</div>
+
+<!-- TensorFlow.js -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.17.0/dist/tf-core.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.17.0/dist/tf-backend-webgl.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection@2.0.1/dist/hand-pose-detection.min.js"></script>
+
+<script>
+// ────── CONSTANTS ──────
+const FINGER_COLORS = {
+  thumb:  '#ff4dff',
+  index:  '#4d9fff',
+  middle: '#4dff88',
+  ring:   '#ffe04d',
+  pinky:  '#c44dff',
+};
+
+const CONNECTIONS = handPoseDetection.util.getAdjacentPairs(handPoseDetection.SupportedModels.MediaPipeFaceDetector);
+
+// Landmark indices per finger
+const FINGER_LANDMARKS = {
+  thumb:  [0, 1, 2, 3, 4],
+  index:  [0, 5, 6, 7, 8],
+  middle: [0, 9, 10, 11, 12],
+  ring:   [0, 13, 14, 15, 16],
+  pinky:  [0, 17, 18, 19, 20],
+};
+
+// MediaPipe hand landmark indices
+const LM = {
+  WRIST: 0,
+  THUMB_CMC: 1, THUMB_MCP: 2, THUMB_IP: 3, THUMB_TIP: 4,
+  INDEX_MCP: 5, INDEX_PIP: 6, INDEX_DIP: 7, INDEX_TIP: 8,
+  MIDDLE_MCP: 9, MIDDLE_PIP: 10, MIDDLE_DIP: 11, MIDDLE_TIP: 12,
+  RING_MCP: 13, RING_PIP: 14, RING_DIP: 15, RING_TIP: 16,
+  PINKY_MCP: 17, PINKY_PIP: 18, PINKY_DIP: 19, PINKY_TIP: 20,
+};
+
+// Gesture names
+const GESTURES = {
+  open: 'バー',
+  fist: 'グー',
+  peace: 'ピース',
+  ok: 'OK',
+  point: '指差し',
+  thumbUp: 'グッド',
+};
+
+// ────── STATE ──────
+let detector = null;
+let videoEl, canvasEl, ctx;
+let rafId = null;
+let lastFrameTime = performance.now();
+let fpsSmooth = 0;
+let handSideEl;
+
+// ────── MATH ──────
+function angle3D(A, B, C) {
+  const AB = { x: A.x - B.x, y: A.y - B.y, z: (A.z||0) - (B.z||0) };
+  const CB = { x: C.x - B.x, y: C.y - B.y, z: (C.z||0) - (B.z||0) };
+  const dot = AB.x*CB.x + AB.y*CB.y + AB.z*CB.z;
+  const magAB = Math.sqrt(AB.x**2 + AB.y**2 + AB.z**2);
+  const magCB = Math.sqrt(CB.x**2 + CB.y**2 + CB.z**2);
+  if (magAB === 0 || magCB === 0) return 180;
+  const cos = Math.max(-1, Math.min(1, dot / (magAB * magCB)));
+  return Math.round(Math.acos(cos) * 180 / Math.PI);
+}
+
+function spreadAngle(tipA, tipB, wrist) {
+  const vA = { x: tipA.x - wrist.x, y: tipA.y - wrist.y };
+  const vB = { x: tipB.x - wrist.x, y: tipB.y - wrist.y };
+  const dot = vA.x*vB.x + vA.y*vB.y;
+  const mA = Math.sqrt(vA.x**2 + vA.y**2);
+  const mB = Math.sqrt(vB.x**2 + vB.y**2);
+  if (mA === 0 || mB === 0) return 0;
+  const cos = Math.max(-1, Math.min(1, dot / (mA * mB)));
+  return Math.round(Math.acos(cos) * 180 / Math.PI);
+}
+
+function wristAngle(wrist, indexMcp) {
+  const dx = indexMcp.x - wrist.x;
+  const dy = indexMcp.y - wrist.y;
+  return Math.round(Math.atan2(dy, dx) * 180 / Math.PI);
+}
+
+function calcOpenness(kps) {
+  // Ratio of sum of tip distances to reference (wrist–middle MCP)
+  const w = kps[LM.WRIST];
+  const ref = Math.hypot(kps[LM.MIDDLE_MCP].x - w.x, kps[LM.MIDDLE_MCP].y - w.y) * 2 || 1;
+  const tips = [LM.THUMB_TIP, LM.INDEX_TIP, LM.MIDDLE_TIP, LM.RING_TIP, LM.PINKY_TIP];
+  const sum = tips.reduce((s, i) => s + Math.hypot(kps[i].x - w.x, kps[i].y - w.y), 0);
+  return Math.min(100, Math.round((sum / tips.length / ref) * 100));
+}
+
+function detectGesture(kps) {
+  const fingerOpen = [
+    LM.THUMB_TIP, LM.INDEX_TIP, LM.MIDDLE_TIP, LM.RING_TIP, LM.PINKY_TIP,
+  ].map((tip, i) => {
+    const base = [LM.THUMB_CMC, LM.INDEX_MCP, LM.MIDDLE_MCP, LM.RING_MCP, LM.PINKY_MCP][i];
+    const w = kps[LM.WRIST];
+    return Math.hypot(kps[tip].x-w.x, kps[tip].y-w.y) >
+           Math.hypot(kps[base].x-w.x, kps[base].y-w.y) * 0.8;
+  });
+  const [th, ix, mi, ri, pi] = fingerOpen;
+  if (th && ix && mi && ri && pi) return GESTURES.open;
+  if (!th && !ix && !mi && !ri && !pi) return GESTURES.fist;
+  if (!th && ix && mi && !ri && !pi) return GESTURES.peace;
+  if (!th && ix && !mi && !ri && !pi) return GESTURES.point;
+  if (th && !ix && !mi && !ri && !pi) return GESTURES.thumbUp;
+  return GESTURES.open;
+}
+
+// ────── DRAW ──────
+function drawSkeleton(kps, handedness) {
+  const W = canvasEl.width, H = canvasEl.height;
+
+  // Scale landmarks to canvas
+  const scale = (lm) => ({
+    x: (1 - lm.x) * W,   // mirror already applied by canvas transform
+    y: lm.y * H,
+    z: lm.z || 0,
+  });
+
+  // Draw per-finger connections
+  const fingers = {
+    thumb:  [LM.WRIST, LM.THUMB_CMC, LM.THUMB_MCP, LM.THUMB_IP, LM.THUMB_TIP],
+    index:  [LM.WRIST, LM.INDEX_MCP, LM.INDEX_PIP, LM.INDEX_DIP, LM.INDEX_TIP],
+    middle: [LM.WRIST, LM.MIDDLE_MCP, LM.MIDDLE_PIP, LM.MIDDLE_DIP, LM.MIDDLE_TIP],
+    ring:   [LM.WRIST, LM.RING_MCP, LM.RING_PIP, LM.RING_DIP, LM.RING_TIP],
+    pinky:  [LM.WRIST, LM.PINKY_MCP, LM.PINKY_PIP, LM.PINKY_DIP, LM.PINKY_TIP],
+  };
+
+  for (const [name, indices] of Object.entries(fingers)) {
+    const color = FINGER_COLORS[name];
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 3;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 8;
+    ctx.globalAlpha = 0.9;
+
+    ctx.beginPath();
+    for (let i = 0; i < indices.length; i++) {
+      const pt = scale(kps[indices[i]]);
+      if (i === 0) ctx.moveTo(pt.x, pt.y);
+      else ctx.lineTo(pt.x, pt.y);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Palm connections
+  const palmRing = [LM.WRIST, LM.INDEX_MCP, LM.MIDDLE_MCP, LM.RING_MCP, LM.PINKY_MCP];
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  palmRing.forEach((idx, i) => {
+    const pt = scale(kps[idx]);
+    if (i === 0) ctx.moveTo(pt.x, pt.y);
+    else ctx.lineTo(pt.x, pt.y);
+  });
+  ctx.closePath();
+  ctx.stroke();
+  ctx.restore();
+
+  // Landmark dots
+  for (const [name, indices] of Object.entries(fingers)) {
+    const color = FINGER_COLORS[name];
+    for (let i = 0; i < indices.length; i++) {
+      const pt = scale(kps[indices[i]]);
+      const isTip = i === indices.length - 1;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, isTip ? 7 : 4, 0, Math.PI * 2);
+      ctx.fillStyle = isTip ? color : '#ffffff';
+      ctx.shadowColor = color;
+      ctx.shadowBlur = isTip ? 12 : 6;
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  // Wrist dot
+  const wristPt = scale(kps[LM.WRIST]);
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(wristPt.x, wristPt.y, 8, 0, Math.PI*2);
+  ctx.fillStyle = '#ffffff';
+  ctx.shadowColor = '#ffffff';
+  ctx.shadowBlur = 14;
+  ctx.fill();
+  ctx.restore();
+
+  // Angle labels between MCP and fingertip vectors
+  const angleLabels = [
+    { idx: LM.INDEX_MCP,  color: FINGER_COLORS.index },
+    { idx: LM.MIDDLE_MCP, color: FINGER_COLORS.middle },
+    { idx: LM.RING_MCP,   color: FINGER_COLORS.ring },
+    { idx: LM.PINKY_MCP,  color: FINGER_COLORS.pinky },
+  ];
+  const tipIndices = [LM.INDEX_TIP, LM.MIDDLE_TIP, LM.RING_TIP, LM.PINKY_TIP];
+
+  angleLabels.forEach(({ idx, color }, i) => {
+    const base = scale(kps[idx]);
+    const tip  = scale(kps[tipIndices[i]]);
+    const mx = (base.x + tip.x) / 2;
+    const my = (base.y + tip.y) / 2;
+    const ang = angle3D(kps[LM.WRIST], kps[idx], kps[tipIndices[i]]);
+
+    ctx.save();
+    ctx.font = 'bold 13px SF Mono, Courier New, monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // Badge
+    const label = ang + '°';
+    const tw = ctx.measureText(label).width + 12;
+    const th2 = 20;
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.beginPath();
+    ctx.roundRect(mx - tw/2, my - th2/2, tw, th2, 6);
+    ctx.fill();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(label, mx, my);
+    ctx.restore();
+  });
+
+  // Hand side label position
+  const wristCanvas = scale(kps[LM.WRIST]);
+  const rect = canvasEl.getBoundingClientRect();
+  const scaleX = rect.width / W;
+  const scaleY = rect.height / H;
+  // Mirror back for DOM positioning
+  const domX = rect.left + (W - wristCanvas.x) * scaleX - 50;
+  const domY = rect.top  + wristCanvas.y * scaleY + 10;
+  handSideEl.style.left = domX + 'px';
+  handSideEl.style.top  = domY + 'px';
+  handSideEl.style.display = 'block';
+  handSideEl.textContent = handedness === 'Left' ? '左手' : '右手';
+}
+
+// ────── UI UPDATE ──────
+function updateUI(kps, handedness) {
+  const w = kps[LM.WRIST];
+
+  // Thumb
+  document.getElementById('t-cmc').textContent = angle3D(kps[LM.WRIST], kps[LM.THUMB_CMC], kps[LM.THUMB_MCP]);
+  document.getElementById('t-mcp').textContent = angle3D(kps[LM.THUMB_CMC], kps[LM.THUMB_MCP], kps[LM.THUMB_IP]);
+  document.getElementById('t-ip' ).textContent = angle3D(kps[LM.THUMB_MCP], kps[LM.THUMB_IP], kps[LM.THUMB_TIP]);
+  // Index
+  document.getElementById('i-mcp').textContent = angle3D(kps[LM.WRIST],     kps[LM.INDEX_MCP], kps[LM.INDEX_PIP]);
+  document.getElementById('i-pip').textContent = angle3D(kps[LM.INDEX_MCP],  kps[LM.INDEX_PIP], kps[LM.INDEX_DIP]);
+  document.getElementById('i-dip').textContent = angle3D(kps[LM.INDEX_PIP],  kps[LM.INDEX_DIP], kps[LM.INDEX_TIP]);
+  // Middle
+  document.getElementById('m-mcp').textContent = angle3D(kps[LM.WRIST],      kps[LM.MIDDLE_MCP], kps[LM.MIDDLE_PIP]);
+  document.getElementById('m-pip').textContent = angle3D(kps[LM.MIDDLE_MCP], kps[LM.MIDDLE_PIP], kps[LM.MIDDLE_DIP]);
+  document.getElementById('m-dip').textContent = angle3D(kps[LM.MIDDLE_PIP], kps[LM.MIDDLE_DIP], kps[LM.MIDDLE_TIP]);
+  // Ring
+  document.getElementById('r-mcp').textContent = angle3D(kps[LM.WRIST],    kps[LM.RING_MCP], kps[LM.RING_PIP]);
+  document.getElementById('r-pip').textContent = angle3D(kps[LM.RING_MCP], kps[LM.RING_PIP], kps[LM.RING_DIP]);
+  document.getElementById('r-dip').textContent = angle3D(kps[LM.RING_PIP], kps[LM.RING_DIP], kps[LM.RING_TIP]);
+  // Pinky
+  document.getElementById('p-mcp').textContent = angle3D(kps[LM.WRIST],     kps[LM.PINKY_MCP], kps[LM.PINKY_PIP]);
+  document.getElementById('p-pip').textContent = angle3D(kps[LM.PINKY_MCP], kps[LM.PINKY_PIP], kps[LM.PINKY_DIP]);
+  document.getElementById('p-dip').textContent = angle3D(kps[LM.PINKY_PIP], kps[LM.PINKY_DIP], kps[LM.PINKY_TIP]);
+
+  // Bottom stats
+  document.getElementById('openness').textContent   = calcOpenness(kps) + '%';
+  document.getElementById('wrist-angle').textContent = wristAngle(kps[LM.WRIST], kps[LM.INDEX_MCP]) + '°';
+
+  // Spread
+  document.getElementById('sp-ti').textContent = spreadAngle(kps[LM.THUMB_TIP],  kps[LM.INDEX_TIP],  w) + '°';
+  document.getElementById('sp-im').textContent = spreadAngle(kps[LM.INDEX_TIP],  kps[LM.MIDDLE_TIP], w) + '°';
+  document.getElementById('sp-mr').textContent = spreadAngle(kps[LM.MIDDLE_TIP], kps[LM.RING_TIP],   w) + '°';
+  document.getElementById('sp-rp').textContent = spreadAngle(kps[LM.RING_TIP],   kps[LM.PINKY_TIP],  w) + '°';
+
+  // Gesture
+  document.getElementById('gesture-name').textContent = detectGesture(kps);
+}
+
+function clearUI() {
+  const ids = ['t-cmc','t-mcp','t-ip','i-mcp','i-pip','i-dip',
+                'm-mcp','m-pip','m-dip','r-mcp','r-pip','r-dip','p-mcp','p-pip','p-dip'];
+  ids.forEach(id => document.getElementById(id).textContent = '---');
+  document.getElementById('openness').textContent = '--%';
+  document.getElementById('wrist-angle').textContent = '--°';
+  ['sp-ti','sp-im','sp-mr','sp-rp'].forEach(id => document.getElementById(id).textContent = '--°');
+  handSideEl.style.display = 'none';
+}
+
+// ────── DETECT LOOP ──────
+async function detect() {
+  if (!detector) return;
+
+  if (videoEl.readyState >= 2) {
+    // Sync canvas size
+    if (canvasEl.width !== videoEl.videoWidth || canvasEl.height !== videoEl.videoHeight) {
+      canvasEl.width  = videoEl.videoWidth;
+      canvasEl.height = videoEl.videoHeight;
+    }
+
+    // FPS
+    const now = performance.now();
+    const dt = now - lastFrameTime;
+    lastFrameTime = now;
+    fpsSmooth = fpsSmooth * 0.85 + (1000 / dt) * 0.15;
+    document.getElementById('fps-num').textContent = Math.round(fpsSmooth);
+
+    const hands = await detector.estimateHands(videoEl, { flipHorizontal: false });
+
+    ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+
+    if (hands.length > 0) {
+      const hand = hands[0];
+      const kps  = hand.keypoints3D || hand.keypoints;
+      // Use 2D keypoints for drawing, normalized
+      const kps2d = hand.keypoints.map(k => ({
+        x: k.x / videoEl.videoWidth,
+        y: k.y / videoEl.videoHeight,
+        z: k.z || 0,
+      }));
+      drawSkeleton(kps2d, hand.handedness);
+      // Use 3D for angles
+      const kpsForAngles = hand.keypoints3D
+        ? hand.keypoints3D.map(k => ({ x: k.x, y: k.y, z: k.z || 0 }))
+        : kps2d;
+      updateUI(kpsForAngles, hand.handedness);
+    } else {
+      clearUI();
+    }
+  }
+
+  rafId = requestAnimationFrame(detect);
+}
+
+// ────── INIT ──────
+async function startApp() {
+  document.getElementById('start-overlay').style.display = 'none';
+
+  videoEl    = document.getElementById('video');
+  canvasEl   = document.getElementById('overlay');
+  ctx        = canvasEl.getContext('2d');
+  handSideEl = document.getElementById('hand-side');
+
+  // Camera
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false,
+    });
+    videoEl.srcObject = stream;
+    await new Promise(r => videoEl.onloadedmetadata = r);
+    videoEl.play();
+  } catch (e) {
+    alert('カメラへのアクセスが拒否されました。\n設定からカメラの許可を確認してください。');
+    document.getElementById('start-overlay').style.display = 'flex';
+    return;
+  }
+
+  // Load model
+  const model = handPoseDetection.SupportedModels.MediaPipeHands;
+  const config = {
+    runtime: 'mediapipe',
+    solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915',
+    modelType: 'full',
+    maxHands: 1,
+  };
+
+  try {
+    detector = await handPoseDetection.createDetector(model, config);
+  } catch (e) {
+    // Fallback to tfjs runtime
+    try {
+      detector = await handPoseDetection.createDetector(model, {
+        runtime: 'tfjs',
+        modelType: 'full',
+        maxHands: 1,
+      });
+    } catch (e2) {
+      alert('モデルの読み込みに失敗しました。\nインターネット接続を確認してください。');
+      return;
+    }
+  }
+
+  detect();
+}
+</script>
+</body>
+</html>
