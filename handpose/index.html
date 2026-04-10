@@ -51,23 +51,42 @@
       background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.2);
       color:#fff; font-size:16px; padding:4px 10px; cursor:pointer; border-radius:6px; line-height:1;
     }
+    #dbg-btn {
+      background:rgba(255,255,255,0.08); border:1px solid rgba(0,188,212,0.4);
+      color:rgba(0,188,212,0.8); font-size:10px; padding:4px 8px; cursor:pointer;
+      border-radius:6px; letter-spacing:1px;
+    }
+    #dbg-btn.active { background:rgba(0,188,212,0.2); color:#0ff; border-color:#0ff; }
     #fps-box {
       font-size:11px; color:rgba(255,255,255,0.6); padding:3px 8px;
       border:1px solid rgba(255,255,255,0.15); border-radius:4px;
       font-family:'Courier New',monospace; letter-spacing:1px;
     }
-    #status-dot { width:8px; height:8px; border-radius:50%; background:#00e676; box-shadow:0 0 6px #00e676; animation:blink 1.5s infinite; }
+    #status-dot { width:8px; height:8px; border-radius:50%; background:#00e676;
+      box-shadow:0 0 6px #00e676; animation:blink 1.5s infinite; }
     #status-dot.loading { background:#ffb800; box-shadow:0 0 6px #ffb800; }
     #status-dot.error   { background:#ff3a3a; box-shadow:0 0 6px #ff3a3a; animation:none; }
     @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
 
-    /* ── Hand score badges ── */
-    #badges { position:fixed; top:calc(var(--safe-t)+52px); left:12px; z-index:20; display:none; flex-direction:column; gap:8px; }
+    /* ── Debug overlay ── */
+    #debug-panel {
+      display:none; position:fixed; bottom:110px; left:8px; right:8px; z-index:30;
+      background:rgba(0,0,0,0.9); border:1px solid rgba(0,188,212,0.6); border-radius:8px;
+      padding:10px 12px; font-family:'Courier New',monospace; font-size:10.5px;
+      color:#0ff; line-height:1.7; max-height:240px; overflow-y:auto;
+    }
+    #debug-panel.show { display:block; }
+    #debug-panel .dk { color:rgba(255,255,255,0.4); display:inline-block; min-width:120px; }
+    #debug-panel .dv { color:#fff; }
+    #debug-panel .dh { color:#ffb800; font-weight:bold; margin-bottom:2px; }
+
+    /* ── Score badges ── */
+    #badges { position:fixed; top:calc(var(--safe-t)+52px); left:12px; z-index:20;
+      display:none; flex-direction:column; gap:8px; }
     #badges.show { display:flex; }
     .badge {
       width:76px; height:68px;
-      background:rgba(0,188,212,0.18);
-      border:1.5px solid rgba(0,188,212,0.65);
+      background:rgba(0,188,212,0.18); border:1.5px solid rgba(0,188,212,0.65);
       clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);
       display:flex; flex-direction:column; align-items:center; justify-content:center;
     }
@@ -75,19 +94,19 @@
     .badge .blbl  { font-size:9px;  color:rgba(0,188,212,0.9); letter-spacing:1px; margin-top:2px; }
     .badge .bhand { font-size:9px;  color:rgba(255,255,255,0.6); letter-spacing:1px; }
 
-    /* ── Right info panel (finger angles) ── */
+    /* ── Right info panel ── */
     #info-panel { position:fixed; top:50%; right:10px; z-index:20; transform:translateY(-50%);
       display:none; flex-direction:column; gap:4px; }
     #info-panel.show { display:flex; }
     .info-section {
-      background:rgba(10,10,15,0.75); border:1px solid rgba(255,255,255,0.12);
+      background:rgba(10,10,15,0.78); border:1px solid rgba(255,255,255,0.13);
       border-radius:7px; padding:5px 8px; font-size:10px;
-      color:rgba(255,255,255,0.6); letter-spacing:.4px; white-space:nowrap; text-align:right;
+      color:rgba(255,255,255,0.6); white-space:nowrap; text-align:right;
     }
-    .info-section .sec-title { font-size:9px; color:rgba(255,255,255,0.35); letter-spacing:1px; margin-bottom:2px; }
-    .info-section .row { display:flex; justify-content:space-between; gap:10px; }
+    .info-section .sec-title { font-size:9px; color:rgba(255,255,255,0.3); letter-spacing:1px; margin-bottom:3px; }
+    .info-section .row { display:flex; justify-content:space-between; gap:8px; line-height:1.6; }
     .info-section .row .lbl { color:rgba(255,255,255,0.45); }
-    .info-section .row .val { color:#fff; font-weight:700; min-width:36px; text-align:right; }
+    .info-section .row .val { color:#fff; font-weight:700; min-width:60px; text-align:right; font-family:'Courier New',monospace; }
     .t-color { color:var(--thumb)!important; }
     .i-color { color:var(--index)!important; }
     .m-color { color:var(--middle)!important; }
@@ -107,9 +126,12 @@
     .leg-dot  { width:7px; height:7px; border-radius:50%; }
 
     /* ── Crosshair ── */
-    #crosshair { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); pointer-events:none; z-index:6; }
-    .ch-h { position:absolute; top:50%; left:-14px; right:-14px; height:1.5px; transform:translateY(-50%); background:rgba(255,255,255,0.4); }
-    .ch-v { position:absolute; left:50%; top:-14px; bottom:-14px; width:1.5px; transform:translateX(-50%); background:rgba(255,255,255,0.4); }
+    #crosshair { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
+      pointer-events:none; z-index:6; }
+    .ch-h { position:absolute; top:50%; left:-14px; right:-14px; height:1.5px;
+      transform:translateY(-50%); background:rgba(255,255,255,0.35); }
+    .ch-v { position:absolute; left:50%; top:-14px; bottom:-14px; width:1.5px;
+      transform:translateX(-50%); background:rgba(255,255,255,0.35); }
 
     /* ── Splash ── */
     #splash { position:fixed; inset:0; z-index:100; background:var(--bg);
@@ -127,7 +149,8 @@
 
     /* ── Perm ── */
     #perm { display:none; position:fixed; inset:0; z-index:101; background:var(--bg);
-      flex-direction:column; align-items:center; justify-content:center; gap:22px; padding:40px; text-align:center; }
+      flex-direction:column; align-items:center; justify-content:center; gap:22px;
+      padding:40px; text-align:center; }
     #perm.show { display:flex; }
     #perm .icon { font-size:50px; }
     #perm p { font-size:13px; color:rgba(255,255,255,0.6); line-height:1.8; }
@@ -142,19 +165,20 @@
 <canvas id="canvas"></canvas>
 <div id="crosshair"><div class="ch-h"></div><div class="ch-v"></div></div>
 
-<!-- Top bar -->
 <div id="topbar">
   <div class="logo">HAND</div>
   <div class="sub">骨格検出</div>
   <div class="spacer"></div>
+  <button id="dbg-btn">DBG</button>
   <button id="cam-btn">⟳</button>
   <div id="fps-box">-- FPS</div>
   <div id="status-dot" class="loading"></div>
 </div>
 
-<!-- Left: open score badges -->
+<div id="debug-panel"></div>
+
 <div id="badges">
-  <div class="badge" id="badge-0">
+  <div class="badge">
     <div class="bval" id="score-val-0">--</div>
     <div class="blbl">開き度</div>
     <div class="bhand" id="hand-label-0">--</div>
@@ -166,29 +190,27 @@
   </div>
 </div>
 
-<!-- Right: finger angle panel -->
 <div id="info-panel">
   <div class="info-section">
-    <div class="sec-title">指関節角度 (Hand 1)</div>
-    <div class="row"><span class="lbl t-color">親指</span><span class="val" id="a-thumb">--/--°</span></div>
-    <div class="row"><span class="lbl i-color">人差指</span><span class="val" id="a-index">--/--/--°</span></div>
-    <div class="row"><span class="lbl m-color">中指</span><span class="val" id="a-middle">--/--/--°</span></div>
-    <div class="row"><span class="lbl r-color">薬指</span><span class="val" id="a-ring">--/--/--°</span></div>
-    <div class="row"><span class="lbl p-color">小指</span><span class="val" id="a-pinky">--/--/--°</span></div>
+    <div class="sec-title">指関節角度 CMC/MCP/PIP/DIP</div>
+    <div class="row"><span class="lbl t-color">親指</span>  <span class="val" id="a-thumb">--</span></div>
+    <div class="row"><span class="lbl i-color">人差指</span><span class="val" id="a-index">--</span></div>
+    <div class="row"><span class="lbl m-color">中指</span>  <span class="val" id="a-middle">--</span></div>
+    <div class="row"><span class="lbl r-color">薬指</span>  <span class="val" id="a-ring">--</span></div>
+    <div class="row"><span class="lbl p-color">小指</span>  <span class="val" id="a-pinky">--</span></div>
   </div>
-  <div class="info-section" id="spread-panel">
+  <div class="info-section">
     <div class="sec-title">指開き角度</div>
-    <div class="row"><span class="lbl">T-I</span><span class="val" id="sp-ti">--°</span></div>
-    <div class="row"><span class="lbl">I-M</span><span class="val" id="sp-im">--°</span></div>
-    <div class="row"><span class="lbl">M-R</span><span class="val" id="sp-mr">--°</span></div>
-    <div class="row"><span class="lbl">R-P</span><span class="val" id="sp-rp">--°</span></div>
+    <div class="row"><span class="lbl">親-人</span><span class="val" id="sp-ti">--°</span></div>
+    <div class="row"><span class="lbl">人-中</span><span class="val" id="sp-im">--°</span></div>
+    <div class="row"><span class="lbl">中-薬</span><span class="val" id="sp-mr">--°</span></div>
+    <div class="row"><span class="lbl">薬-小</span><span class="val" id="sp-rp">--°</span></div>
   </div>
 </div>
 
-<!-- Bottom bar -->
 <div id="bottom">
-  <div class="brow" id="hand-info">手を検出中…</div>
-  <div class="brow">手首角 <span id="v-wrist">--°</span> &nbsp;|&nbsp; 掌傾き <span id="v-palm">--°</span> &nbsp;|&nbsp; 指の合計屈曲 <span id="v-total">--°</span></div>
+  <div class="brow" id="hand-info">手をかざしてください 👋</div>
+  <div class="brow">手首角 <span id="v-wrist">--°</span> &nbsp;|&nbsp; 掌傾き <span id="v-palm">--°</span> &nbsp;|&nbsp; 合計屈曲 <span id="v-total">--°</span></div>
   <div class="legend-row">
     <div class="leg-item"><div class="leg-dot" style="background:var(--thumb)"></div>親指</div>
     <div class="leg-item"><div class="leg-dot" style="background:var(--index)"></div>人差指</div>
@@ -198,7 +220,6 @@
   </div>
 </div>
 
-<!-- Splash -->
 <div id="splash">
   <div class="hand-icon">🖐</div>
   <h1>HAND</h1>
@@ -226,19 +247,13 @@
    * 17=PINKY_MCP 18=PINKY_PIP 19=PINKY_DIP 20=PINKY_TIP
    */
 
-  // Finger color palette
   const C = {
-    palm:   '#e0e0e0',
-    thumb:  '#ff6b6b',
-    index:  '#4a9eff',
-    middle: '#00e676',
-    ring:   '#ff8c00',
-    pinky:  '#c084fc',
+    palm:'#e0e0e0', thumb:'#ff6b6b', index:'#4a9eff',
+    middle:'#00e676', ring:'#ff8c00', pinky:'#c084fc'
   };
 
-  // Skeleton connections: [from, to, color]
   const CONNECTIONS = [
-    // Palm
+    // Palm cross-connections
     [0,1,C.thumb],[0,5,C.index],[0,17,C.pinky],
     [5,9,C.palm],[9,13,C.palm],[13,17,C.palm],
     // Thumb
@@ -253,7 +268,6 @@
     [17,18,C.pinky],[18,19,C.pinky],[19,20,C.pinky],
   ];
 
-  // Joint dot colors by index
   function dotColor(i){
     if(i===0) return C.palm;
     if(i<=4)  return C.thumb;
@@ -263,58 +277,107 @@
     return C.pinky;
   }
 
-  // ── Math helpers ──
+  // ── NaN-safe math ──
+  function valid(p){
+    return p != null && typeof p.x === 'number' && !isNaN(p.x) && !isNaN(p.y);
+  }
+
   function angle3(a, m, b){
-    if(!a||!m||!b) return null;
-    const ax=a.x-m.x, ay=a.y-m.y;
-    const bx=b.x-m.x, by=b.y-m.y;
+    if(!valid(a)||!valid(m)||!valid(b)) return null;
+    const ax=a.x-m.x, ay=a.y-m.y, bx=b.x-m.x, by=b.y-m.y;
     const la=Math.sqrt(ax*ax+ay*ay), lb=Math.sqrt(bx*bx+by*by);
-    if(!la||!lb) return null;
-    return Math.round(Math.acos(Math.max(-1,Math.min(1,(ax*bx+ay*by)/(la*lb))))*180/Math.PI);
+    if(la<1e-6||lb<1e-6) return null;
+    const deg = Math.acos(Math.max(-1,Math.min(1,(ax*bx+ay*by)/(la*lb)))) * 180/Math.PI;
+    return isNaN(deg) ? null : Math.round(deg);
   }
 
   function dist2d(a,b){
-    const dx=a.x-b.x, dy=a.y-b.y;
-    return Math.sqrt(dx*dx+dy*dy);
+    if(!valid(a)||!valid(b)) return 0;
+    return Math.sqrt((a.x-b.x)**2+(a.y-b.y)**2);
   }
 
-  function angleBetweenDirs(a0,a1, b0,b1){
-    // angle between two line directions
-    const ax=a1.x-a0.x, ay=a1.y-a0.y;
-    const bx=b1.x-b0.x, by=b1.y-b0.y;
+  function spreadAngle(a0,a1,b0,b1){
+    if(!valid(a0)||!valid(a1)||!valid(b0)||!valid(b1)) return null;
+    const ax=a1.x-a0.x, ay=a1.y-a0.y, bx=b1.x-b0.x, by=b1.y-b0.y;
     const la=Math.sqrt(ax*ax+ay*ay), lb=Math.sqrt(bx*bx+by*by);
-    if(!la||!lb) return null;
-    return Math.round(Math.acos(Math.max(-1,Math.min(1,(ax*bx+ay*by)/(la*lb))))*180/Math.PI);
+    if(la<1e-6||lb<1e-6) return null;
+    const deg = Math.acos(Math.max(-1,Math.min(1,(ax*bx+ay*by)/(la*lb)))) * 180/Math.PI;
+    return isNaN(deg) ? null : Math.round(deg);
   }
 
-  // Open score: average tip-to-wrist distance / palm width
+  // ── Coordinate normalization ──
+  // hand-pose-detection (tfjs runtime) should return pixel coords,
+  // but guard against 0-1 normalized output just in case.
+  function normalizeKps(kps, cw, ch){
+    if(!kps||!kps.length) return kps;
+    const maxX = kps.reduce((m,p)=>p&&p.x>m?p.x:m, 0);
+    const maxY = kps.reduce((m,p)=>p&&p.y>m?p.y:m, 0);
+    // If max coordinate is <= 2, assume normalized [0,1]
+    if(maxX <= 2 && maxY <= 2){
+      return kps.map(p=> p ? {...p, x:p.x*cw, y:p.y*ch} : p);
+    }
+    return kps;
+  }
+
   function openScore(lm){
-    const palmW = dist2d(lm[0], lm[5]);
+    const palmW = dist2d(lm[0],lm[5]);
     if(!palmW) return 0;
-    const tips=[4,8,12,16,20];
     let sum=0;
-    tips.forEach(t=>{ sum+=dist2d(lm[0],lm[t]); });
-    return Math.min(100, Math.round((sum/tips.length)/palmW*50));
+    [4,8,12,16,20].forEach(t=>{ sum+=dist2d(lm[0],lm[t]); });
+    return Math.min(100, Math.round((sum/5)/palmW*50));
   }
 
-  // Wrist angle (0→5→9 triangle base)
-  function wristAngle(lm){
-    return angle3(lm[5], lm[0], lm[17]);
-  }
-
-  // Palm tilt: angle of wrist→middle-mcp relative to vertical
   function palmTilt(lm){
+    if(!valid(lm[0])||!valid(lm[9])) return null;
     const dx=lm[9].x-lm[0].x, dy=lm[9].y-lm[0].y;
-    return Math.round(Math.atan2(dx,dy)*180/Math.PI);
+    const deg = Math.atan2(dx,dy)*180/Math.PI;
+    return isNaN(deg) ? null : Math.round(deg);
   }
 
-  // ── Detector state ──
+  // Extract handedness string robustly (API differs between versions)
+  function getHandedness(hand){
+    const h = hand.handedness;
+    if(typeof h === 'string') return h; // 'Left' or 'Right'
+    if(Array.isArray(h) && h.length) return h[0].categoryName||h[0].label||'Right';
+    return 'Right';
+  }
+
+  // ── State ──
   let detector=null, stream=null, animId=null, running=false;
   let facingMode='user', lastTime=0, fpsArr=[];
+  let debugMode=false;
 
   const video  = document.getElementById('video');
   const canvas = document.getElementById('canvas');
   const ctx    = canvas.getContext('2d');
+  const dbgEl  = document.getElementById('debug-panel');
+
+  document.getElementById('dbg-btn').addEventListener('click',()=>{
+    debugMode=!debugMode;
+    dbgEl.classList.toggle('show',debugMode);
+    document.getElementById('dbg-btn').classList.toggle('active',debugMode);
+  });
+
+  function updateDebug(hands, vw, vh){
+    if(!debugMode) return;
+    let html = `<div class="dh">─── DEBUG ───</div>`;
+    html += `<div><span class="dk">video size</span><span class="dv">${vw}×${vh}</span></div>`;
+    html += `<div><span class="dk">hands found</span><span class="dv">${hands.length}</span></div>`;
+    if(hands.length){
+      const h=hands[0];
+      const raw=h.keypoints||[];
+      const hd=getHandedness(h);
+      const isNorm = raw.length && raw[0] && Math.abs(raw[0].x)<=2;
+      html += `<div><span class="dk">handedness</span><span class="dv">${hd} (raw="${JSON.stringify(h.handedness).slice(0,20)}")</span></div>`;
+      html += `<div><span class="dk">keypoints.len</span><span class="dv">${raw.length}</span></div>`;
+      html += `<div><span class="dk">coord type</span><span class="dv">${isNorm?'NORMALIZED→scaled':'PIXEL'}</span></div>`;
+      if(raw[0])  html += `<div><span class="dk">kp[0] WRIST</span><span class="dv">x:${raw[0].x?.toFixed(3)} y:${raw[0].y?.toFixed(3)}</span></div>`;
+      if(raw[8])  html += `<div><span class="dk">kp[8] IDX-TIP</span><span class="dv">x:${raw[8].x?.toFixed(3)} y:${raw[8].y?.toFixed(3)}</span></div>`;
+      if(raw[12]) html += `<div><span class="dk">kp[12] MID-TIP</span><span class="dv">x:${raw[12].x?.toFixed(3)} y:${raw[12].y?.toFixed(3)}</span></div>`;
+      html += `<div><span class="dk">hand.score</span><span class="dv">${h.score?.toFixed(3)||'N/A'}</span></div>`;
+    }
+    dbgEl.innerHTML = html;
+  }
 
   // ── Load model ──
   async function loadModel(){
@@ -323,12 +386,10 @@
     bar.style.width='10%'; msg.textContent='TensorFlow初期化中…';
     await tf.setBackend('webgl'); await tf.ready();
     bar.style.width='40%'; msg.textContent='MediaPipe Handsを読み込み中…';
-    const model = handPoseDetection.SupportedModels.MediaPipeHands;
-    detector = await handPoseDetection.createDetector(model, {
-      runtime: 'tfjs',
-      modelType: 'full',
-      maxHands: 2,
-    });
+    detector = await handPoseDetection.createDetector(
+      handPoseDetection.SupportedModels.MediaPipeHands,
+      { runtime:'tfjs', modelType:'full', maxHands:2 }
+    );
     bar.style.width='90%'; msg.textContent='準備完了 — 21点×2手';
     await new Promise(r=>setTimeout(r,400));
     bar.style.width='100%';
@@ -354,7 +415,7 @@
     canvas.height = video.videoHeight || window.innerHeight;
   }
 
-  // ── Main loop ──
+  // ── Loop ──
   async function loop(){
     if(!running) return;
     const now=performance.now(), dt=now-lastTime; lastTime=now;
@@ -364,7 +425,11 @@
         Math.round(fpsArr.reduce((a,b)=>a+b)/fpsArr.length)+' FPS';
     }
     let hands=[];
-    try{ hands=await detector.estimateHands(video,{flipHorizontal: facingMode==='user'}); }catch(e){}
+    try{
+      hands = await detector.estimateHands(video, { flipHorizontal: facingMode==='user' });
+    }catch(e){
+      try{ hands = await detector.estimateHands(video); }catch(e2){}
+    }
     draw(hands);
     animId=requestAnimationFrame(loop);
   }
@@ -376,12 +441,14 @@
     if(canvas.width!==vw||canvas.height!==vh) resizeCanvas();
     ctx.clearRect(0,0,vw,vh);
 
-    const badges  = document.getElementById('badges');
-    const infoP   = document.getElementById('info-panel');
-    const bottomB = document.getElementById('bottom');
-    const badge1  = document.getElementById('badge-1');
+    updateDebug(hands, vw, vh);
 
-    if(!hands.length){
+    const badges=document.getElementById('badges');
+    const infoP=document.getElementById('info-panel');
+    const bottomB=document.getElementById('bottom');
+    const badge1=document.getElementById('badge-1');
+
+    if(!hands||!hands.length){
       badges.classList.remove('show');
       infoP.classList.remove('show');
       bottomB.classList.remove('show');
@@ -392,128 +459,143 @@
     badges.classList.add('show');
     infoP.classList.add('show');
     bottomB.classList.add('show');
-    badge1.style.display = hands.length > 1 ? 'flex' : 'none';
+    badge1.style.display = hands.length>1 ? 'flex':'none';
 
-    hands.forEach((hand, hi)=>{
-      const lm = hand.keypoints; // array of {x,y,name}
-      const handedness = hand.handedness; // 'Left' or 'Right'
+    hands.forEach((hand,hi)=>{
+      const raw = hand.keypoints || [];
+      // Normalize to pixel space
+      const lm  = normalizeKps(raw, vw, vh);
+      const handedness = getHandedness(hand);
 
-      // ── Draw connections ──
+      // ── Skeleton lines ──
       ctx.lineCap='round';
       CONNECTIONS.forEach(([i,j,col])=>{
         const a=lm[i], b=lm[j];
-        if(!a||!b) return;
+        if(!valid(a)||!valid(b)) return;
         ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y);
         ctx.strokeStyle=col; ctx.lineWidth=3.5;
-        ctx.shadowColor=col; ctx.shadowBlur=6; ctx.stroke(); ctx.shadowBlur=0;
+        ctx.shadowColor=col; ctx.shadowBlur=7; ctx.stroke(); ctx.shadowBlur=0;
       });
 
-      // ── Draw joints ──
+      // ── Joints ──
       lm.forEach((p,i)=>{
-        if(!p) return;
+        if(!valid(p)) return;
         const col=dotColor(i);
-        const r = (i===0) ? 7 : (i%4===0) ? 6 : 4; // tip & wrist bigger
+        const r=(i===0)?7:(i%4===0)?6:4;
         ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2);
         ctx.fillStyle=col; ctx.shadowColor=col; ctx.shadowBlur=10; ctx.fill(); ctx.shadowBlur=0;
         ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2);
-        ctx.strokeStyle='rgba(255,255,255,0.65)'; ctx.lineWidth=1.5; ctx.stroke();
+        ctx.strokeStyle='rgba(255,255,255,0.6)'; ctx.lineWidth=1.5; ctx.stroke();
       });
 
-      // ── Angle labels on canvas ──
+      // ── Angle labels ──
       ctx.font='bold 12px "Helvetica Neue",sans-serif';
       ctx.textBaseline='middle';
-
-      function canvasLabel(pt, text, col){
-        if(!pt||text===null) return;
+      function canvasLabel(pt,text,col){
+        if(!valid(pt)||text===null) return;
         const x=pt.x+8, y=pt.y-10;
         const w=ctx.measureText(text).width+8;
         ctx.fillStyle='rgba(0,0,0,0.65)'; ctx.fillRect(x-4,y-9,w,18);
         ctx.fillStyle=col; ctx.fillText(text,x,y);
       }
 
-      // Per-finger joint angles
-      // Thumb: CMC(1) angle, IP(3) angle
-      const tCMC = angle3(lm[0],lm[1],lm[2]);
-      const tIP  = angle3(lm[2],lm[3],lm[4]);
-      canvasLabel(lm[2], tCMC!==null?tCMC+'°':null, C.thumb);
-      canvasLabel(lm[3], tIP!==null?tIP+'°':null, C.thumb);
+      // Thumb: CMC→MCP→IP→TIP
+      const tCMC=angle3(lm[0],lm[1],lm[2]);
+      const tMCP=angle3(lm[1],lm[2],lm[3]);
+      const tIP =angle3(lm[2],lm[3],lm[4]);
+      canvasLabel(lm[2], tMCP!==null?tMCP+'°':null, C.thumb);
+      canvasLabel(lm[3], tIP !==null?tIP+'°':null,  C.thumb);
 
-      // Index: MCP(5), PIP(6), DIP(7)
-      const iMCP=angle3(lm[0],lm[5],lm[6]), iPIP=angle3(lm[5],lm[6],lm[7]), iDIP=angle3(lm[6],lm[7],lm[8]);
+      // Index
+      const iMCP=angle3(lm[0],lm[5],lm[6]);
+      const iPIP=angle3(lm[5],lm[6],lm[7]);
+      const iDIP=angle3(lm[6],lm[7],lm[8]);
       canvasLabel(lm[6], iPIP!==null?iPIP+'°':null, C.index);
       canvasLabel(lm[7], iDIP!==null?iDIP+'°':null, C.index);
 
       // Middle
-      const mMCP=angle3(lm[0],lm[9],lm[10]), mPIP=angle3(lm[9],lm[10],lm[11]), mDIP=angle3(lm[10],lm[11],lm[12]);
+      const mMCP=angle3(lm[0],lm[9], lm[10]);
+      const mPIP=angle3(lm[9],lm[10],lm[11]);
+      const mDIP=angle3(lm[10],lm[11],lm[12]);
       canvasLabel(lm[10], mPIP!==null?mPIP+'°':null, C.middle);
       canvasLabel(lm[11], mDIP!==null?mDIP+'°':null, C.middle);
 
       // Ring
-      const rMCP=angle3(lm[0],lm[13],lm[14]), rPIP=angle3(lm[13],lm[14],lm[15]), rDIP=angle3(lm[14],lm[15],lm[16]);
+      const rMCP=angle3(lm[0],lm[13],lm[14]);
+      const rPIP=angle3(lm[13],lm[14],lm[15]);
+      const rDIP=angle3(lm[14],lm[15],lm[16]);
       canvasLabel(lm[14], rPIP!==null?rPIP+'°':null, C.ring);
       canvasLabel(lm[15], rDIP!==null?rDIP+'°':null, C.ring);
 
       // Pinky
-      const pMCP=angle3(lm[0],lm[17],lm[18]), pPIP=angle3(lm[17],lm[18],lm[19]), pDIP=angle3(lm[18],lm[19],lm[20]);
+      const pMCP=angle3(lm[0],lm[17],lm[18]);
+      const pPIP=angle3(lm[17],lm[18],lm[19]);
+      const pDIP=angle3(lm[18],lm[19],lm[20]);
       canvasLabel(lm[18], pPIP!==null?pPIP+'°':null, C.pinky);
       canvasLabel(lm[19], pDIP!==null?pDIP+'°':null, C.pinky);
 
-      // Handedness label near wrist
-      ctx.font='bold 14px "Helvetica Neue",sans-serif';
-      const hLabel = handedness==='Left' ? '左手' : '右手';
-      const hw=ctx.measureText(hLabel).width+10;
-      ctx.fillStyle='rgba(0,0,0,0.7)'; ctx.fillRect(lm[0].x-hw/2-5, lm[0].y+14, hw, 20);
-      ctx.fillStyle='rgba(255,255,255,0.9)'; ctx.textBaseline='top'; ctx.fillText(hLabel, lm[0].x-hw/2, lm[0].y+15);
-      ctx.textBaseline='middle';
+      // Handedness near wrist
+      if(valid(lm[0])){
+        ctx.font='bold 14px "Helvetica Neue",sans-serif';
+        const hLabel=handedness==='Left'?'左手':'右手';
+        const hw=ctx.measureText(hLabel).width+12;
+        ctx.fillStyle='rgba(0,0,0,0.72)';
+        ctx.fillRect(lm[0].x-hw/2, lm[0].y+13, hw, 20);
+        ctx.fillStyle='rgba(255,255,255,0.92)';
+        ctx.textBaseline='top';
+        ctx.fillText(hLabel, lm[0].x-hw/2+6, lm[0].y+14);
+        ctx.textBaseline='middle';
+      }
 
-      // ── Score & spread ──
-      const open = openScore(lm);
-      const wAng = wristAngle(lm);
-      const tilt  = palmTilt(lm);
+      // ── Metrics ──
+      const open   = openScore(lm);
+      const tilt   = palmTilt(lm);
+      const wAng   = angle3(lm[5],lm[0],lm[17]);
+      const spTI   = spreadAngle(lm[0],lm[2], lm[0],lm[5]);
+      const spIM   = spreadAngle(lm[0],lm[5], lm[0],lm[9]);
+      const spMR   = spreadAngle(lm[0],lm[9], lm[0],lm[13]);
+      const spRP   = spreadAngle(lm[0],lm[13],lm[0],lm[17]);
 
-      // Finger spread angles between adjacent MCP axes
-      const spTI = angleBetweenDirs(lm[0],lm[2], lm[0],lm[5]);
-      const spIM = angleBetweenDirs(lm[0],lm[5], lm[0],lm[9]);
-      const spMR = angleBetweenDirs(lm[0],lm[9], lm[0],lm[13]);
-      const spRP = angleBetweenDirs(lm[0],lm[13], lm[0],lm[17]);
+      let totalBend=0, bendCnt=0;
+      [iPIP,mPIP,rPIP,pPIP].forEach(a=>{
+        if(a!==null){ totalBend+=Math.abs(180-a); bendCnt++; }
+      });
 
-      // Total bend (sum of PIP angles deviation from 180)
-      let totalBend=0;
-      [iPIP,mPIP,rPIP,pPIP].forEach(a=>{ if(a!==null) totalBend+=Math.abs(180-a); });
-
-      // ── DOM update for first hand ──
+      // ── DOM (first hand only for detail panel) ──
       if(hi===0){
-        document.getElementById('score-val-0').textContent = open;
-        document.getElementById('hand-label-0').textContent = handedness==='Left'?'左手':'右手';
-        function fmtFinger(a,b,c){ return [a,b,c].map(v=>v!==null?v+'°':'--').join('/'); }
-        document.getElementById('a-thumb').textContent  = (tCMC!==null?tCMC:'--')+'/'+(tIP!==null?tIP:'--')+'°';
-        document.getElementById('a-index').textContent  = fmtFinger(iMCP,iPIP,iDIP);
-        document.getElementById('a-middle').textContent = fmtFinger(mMCP,mPIP,mDIP);
-        document.getElementById('a-ring').textContent   = fmtFinger(rMCP,rPIP,rDIP);
-        document.getElementById('a-pinky').textContent  = fmtFinger(pMCP,pPIP,pDIP);
-        document.getElementById('sp-ti').textContent = spTI!==null?spTI+'°':'--°';
-        document.getElementById('sp-im').textContent = spIM!==null?spIM+'°':'--°';
-        document.getElementById('sp-mr').textContent = spMR!==null?spMR+'°':'--°';
-        document.getElementById('sp-rp').textContent = spRP!==null?spRP+'°':'--°';
-        document.getElementById('v-wrist').textContent = wAng!==null?wAng+'°':'--°';
-        document.getElementById('v-palm').textContent  = tilt!==null?tilt+'°':'--°';
-        document.getElementById('v-total').textContent = totalBend?Math.round(totalBend)+'°':'--°';
+        document.getElementById('score-val-0').textContent=open;
+        document.getElementById('hand-label-0').textContent=handedness==='Left'?'左手':'右手';
+
+        function fmt(...vals){ return vals.map(v=>v!==null?v+'°':'--').join('/'); }
+        document.getElementById('a-thumb').textContent  = fmt(tCMC,tMCP,tIP);
+        document.getElementById('a-index').textContent  = fmt(iMCP,iPIP,iDIP);
+        document.getElementById('a-middle').textContent = fmt(mMCP,mPIP,mDIP);
+        document.getElementById('a-ring').textContent   = fmt(rMCP,rPIP,rDIP);
+        document.getElementById('a-pinky').textContent  = fmt(pMCP,pPIP,pDIP);
+
+        document.getElementById('sp-ti').textContent=spTI!==null?spTI+'°':'--°';
+        document.getElementById('sp-im').textContent=spIM!==null?spIM+'°':'--°';
+        document.getElementById('sp-mr').textContent=spMR!==null?spMR+'°':'--°';
+        document.getElementById('sp-rp').textContent=spRP!==null?spRP+'°':'--°';
+
+        document.getElementById('v-wrist').textContent=wAng !==null?wAng+'°':'--°';
+        document.getElementById('v-palm').textContent =tilt !==null?tilt+'°':'--°';
+        document.getElementById('v-total').textContent=bendCnt?Math.round(totalBend)+'°':'--°';
       }
       if(hi===1){
-        document.getElementById('score-val-1').textContent = open;
-        document.getElementById('hand-label-1').textContent = handedness==='Left'?'左手':'右手';
+        document.getElementById('score-val-1').textContent=open;
+        document.getElementById('hand-label-1').textContent=handedness==='Left'?'左手':'右手';
       }
     });
 
-    // Hand info bar
-    const labels = hands.map(h=>h.handedness==='Left'?'左手':'右手');
-    document.getElementById('hand-info').textContent =
-      labels.join(' + ') + ' 検出中 (' + hands.length + '手)';
+    const labels = hands.map(h=>getHandedness(h)==='Left'?'左手':'右手');
+    document.getElementById('hand-info').textContent=
+      labels.join(' + ')+' 検出中 ('+hands.length+'手)';
   }
 
   // ── Controls ──
-  document.getElementById('cam-btn').addEventListener('click', async()=>{
-    facingMode = facingMode==='environment'?'user':'environment';
+  document.getElementById('cam-btn').addEventListener('click',async()=>{
+    facingMode=facingMode==='environment'?'user':'environment';
     if(running){
       cancelAnimationFrame(animId);
       await startCamera();
@@ -527,7 +609,7 @@
     document.getElementById('perm').classList.add('show');
   });
 
-  document.getElementById('perm-btn').addEventListener('click', async()=>{
+  document.getElementById('perm-btn').addEventListener('click',async()=>{
     document.getElementById('perm').classList.remove('show');
     try{
       await startCamera(); running=true;
@@ -535,12 +617,13 @@
       lastTime=performance.now(); animId=requestAnimationFrame(loop);
     }catch(e){
       document.getElementById('status-dot').classList.add('error');
-      document.querySelector('#perm p').textContent='カメラへのアクセスが拒否されました。\nSafari設定 → プライバシー → カメラ を確認してください。';
+      document.querySelector('#perm p').textContent=
+        'カメラへのアクセスが拒否されました。\nSafari設定 → プライバシー → カメラ を確認してください。';
       document.getElementById('perm').classList.add('show');
     }
   });
 
-  window.addEventListener('resize', resizeCanvas);
+  window.addEventListener('resize',resizeCanvas);
   if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
 
   loadModel().catch(e=>{
