@@ -35,6 +35,8 @@
 
     #video  { position:fixed; inset:0; width:100%; height:100%; object-fit:cover; opacity:0; transition:opacity .5s; }
     #video.ready { opacity:1; }
+    /* Front camera: mirror video visually */
+    #video.mirror { transform:scaleX(-1); }
     #canvas { position:fixed; inset:0; width:100%; height:100%; pointer-events:none; z-index:5; }
 
     /* ── Top bar ── */
@@ -68,19 +70,19 @@
     #status-dot.error   { background:#ff3a3a; box-shadow:0 0 6px #ff3a3a; animation:none; }
     @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
 
-    /* ── Debug overlay ── */
+    /* ── Debug ── */
     #debug-panel {
       display:none; position:fixed; bottom:110px; left:8px; right:8px; z-index:30;
-      background:rgba(0,0,0,0.9); border:1px solid rgba(0,188,212,0.6); border-radius:8px;
+      background:rgba(0,0,0,0.92); border:1px solid rgba(0,188,212,0.6); border-radius:8px;
       padding:10px 12px; font-family:'Courier New',monospace; font-size:10.5px;
       color:#0ff; line-height:1.7; max-height:240px; overflow-y:auto;
     }
     #debug-panel.show { display:block; }
-    #debug-panel .dk { color:rgba(255,255,255,0.4); display:inline-block; min-width:120px; }
+    #debug-panel .dk { color:rgba(255,255,255,0.4); display:inline-block; min-width:130px; }
     #debug-panel .dv { color:#fff; }
     #debug-panel .dh { color:#ffb800; font-weight:bold; margin-bottom:2px; }
 
-    /* ── Score badges ── */
+    /* ── Badges ── */
     #badges { position:fixed; top:calc(var(--safe-t)+52px); left:12px; z-index:20;
       display:none; flex-direction:column; gap:8px; }
     #badges.show { display:flex; }
@@ -94,7 +96,7 @@
     .badge .blbl  { font-size:9px;  color:rgba(0,188,212,0.9); letter-spacing:1px; margin-top:2px; }
     .badge .bhand { font-size:9px;  color:rgba(255,255,255,0.6); letter-spacing:1px; }
 
-    /* ── Right info panel ── */
+    /* ── Info panel ── */
     #info-panel { position:fixed; top:50%; right:10px; z-index:20; transform:translateY(-50%);
       display:none; flex-direction:column; gap:4px; }
     #info-panel.show { display:flex; }
@@ -107,13 +109,13 @@
     .info-section .row { display:flex; justify-content:space-between; gap:8px; line-height:1.6; }
     .info-section .row .lbl { color:rgba(255,255,255,0.45); }
     .info-section .row .val { color:#fff; font-weight:700; min-width:60px; text-align:right; font-family:'Courier New',monospace; }
-    .t-color { color:var(--thumb)!important; }
-    .i-color { color:var(--index)!important; }
-    .m-color { color:var(--middle)!important; }
-    .r-color { color:var(--ring)!important; }
-    .p-color { color:var(--pinky)!important; }
+    .t-color{color:var(--thumb)!important}
+    .i-color{color:var(--index)!important}
+    .m-color{color:var(--middle)!important}
+    .r-color{color:var(--ring)!important}
+    .p-color{color:var(--pinky)!important}
 
-    /* ── Bottom bar ── */
+    /* ── Bottom ── */
     #bottom { position:fixed; bottom:0; left:0; right:0; z-index:20;
       padding:8px 14px calc(var(--safe-b)+10px);
       background:linear-gradient(transparent,rgba(10,10,15,0.88));
@@ -179,12 +181,12 @@
 
 <div id="badges">
   <div class="badge">
-    <div class="bval" id="score-val-0">--</div>
+    <div class="bval"  id="score-val-0">--</div>
     <div class="blbl">開き度</div>
     <div class="bhand" id="hand-label-0">--</div>
   </div>
   <div class="badge" id="badge-1" style="display:none;">
-    <div class="bval" id="score-val-1">--</div>
+    <div class="bval"  id="score-val-1">--</div>
     <div class="blbl">開き度</div>
     <div class="bhand" id="hand-label-1">--</div>
   </div>
@@ -238,6 +240,13 @@
 <script>
 (function(){
   /*
+   * ── IMPORTANT BUG WORKAROUND ──────────────────────────────────────────────
+   * hand-pose-detection@2.0.1 with runtime:'tfjs' produces NaN x/y coordinates
+   * when flipHorizontal:true is passed to estimateHands().
+   * Fix: always call estimateHands with flipHorizontal:false, then manually
+   *      mirror x-coordinates (vw - x) at draw time for the front camera.
+   * ─────────────────────────────────────────────────────────────────────────
+   *
    * MediaPipe Hands 21 landmarks:
    *  0=WRIST
    *  1=THUMB_CMC  2=THUMB_MCP  3=THUMB_IP   4=THUMB_TIP
@@ -253,18 +262,12 @@
   };
 
   const CONNECTIONS = [
-    // Palm cross-connections
     [0,1,C.thumb],[0,5,C.index],[0,17,C.pinky],
     [5,9,C.palm],[9,13,C.palm],[13,17,C.palm],
-    // Thumb
     [1,2,C.thumb],[2,3,C.thumb],[3,4,C.thumb],
-    // Index
     [5,6,C.index],[6,7,C.index],[7,8,C.index],
-    // Middle
     [9,10,C.middle],[10,11,C.middle],[11,12,C.middle],
-    // Ring
     [13,14,C.ring],[14,15,C.ring],[15,16,C.ring],
-    // Pinky
     [17,18,C.pinky],[18,19,C.pinky],[19,20,C.pinky],
   ];
 
@@ -277,18 +280,16 @@
     return C.pinky;
   }
 
-  // ── NaN-safe math ──
-  function valid(p){
-    return p != null && typeof p.x === 'number' && !isNaN(p.x) && !isNaN(p.y);
-  }
+  // ── NaN-safe helpers ──
+  function valid(p){ return p!=null && typeof p.x==='number' && !isNaN(p.x) && !isNaN(p.y); }
 
-  function angle3(a, m, b){
+  function angle3(a,m,b){
     if(!valid(a)||!valid(m)||!valid(b)) return null;
     const ax=a.x-m.x, ay=a.y-m.y, bx=b.x-m.x, by=b.y-m.y;
     const la=Math.sqrt(ax*ax+ay*ay), lb=Math.sqrt(bx*bx+by*by);
     if(la<1e-6||lb<1e-6) return null;
-    const deg = Math.acos(Math.max(-1,Math.min(1,(ax*bx+ay*by)/(la*lb)))) * 180/Math.PI;
-    return isNaN(deg) ? null : Math.round(deg);
+    const deg=Math.acos(Math.max(-1,Math.min(1,(ax*bx+ay*by)/(la*lb))))*180/Math.PI;
+    return isNaN(deg)?null:Math.round(deg);
   }
 
   function dist2d(a,b){
@@ -301,45 +302,37 @@
     const ax=a1.x-a0.x, ay=a1.y-a0.y, bx=b1.x-b0.x, by=b1.y-b0.y;
     const la=Math.sqrt(ax*ax+ay*ay), lb=Math.sqrt(bx*bx+by*by);
     if(la<1e-6||lb<1e-6) return null;
-    const deg = Math.acos(Math.max(-1,Math.min(1,(ax*bx+ay*by)/(la*lb)))) * 180/Math.PI;
-    return isNaN(deg) ? null : Math.round(deg);
-  }
-
-  // ── Coordinate normalization ──
-  // hand-pose-detection (tfjs runtime) should return pixel coords,
-  // but guard against 0-1 normalized output just in case.
-  function normalizeKps(kps, cw, ch){
-    if(!kps||!kps.length) return kps;
-    const maxX = kps.reduce((m,p)=>p&&p.x>m?p.x:m, 0);
-    const maxY = kps.reduce((m,p)=>p&&p.y>m?p.y:m, 0);
-    // If max coordinate is <= 2, assume normalized [0,1]
-    if(maxX <= 2 && maxY <= 2){
-      return kps.map(p=> p ? {...p, x:p.x*cw, y:p.y*ch} : p);
-    }
-    return kps;
+    const deg=Math.acos(Math.max(-1,Math.min(1,(ax*bx+ay*by)/(la*lb))))*180/Math.PI;
+    return isNaN(deg)?null:Math.round(deg);
   }
 
   function openScore(lm){
-    const palmW = dist2d(lm[0],lm[5]);
+    const palmW=dist2d(lm[0],lm[5]);
     if(!palmW) return 0;
     let sum=0;
     [4,8,12,16,20].forEach(t=>{ sum+=dist2d(lm[0],lm[t]); });
-    return Math.min(100, Math.round((sum/5)/palmW*50));
+    return Math.min(100,Math.round((sum/5)/palmW*50));
   }
 
   function palmTilt(lm){
     if(!valid(lm[0])||!valid(lm[9])) return null;
-    const dx=lm[9].x-lm[0].x, dy=lm[9].y-lm[0].y;
-    const deg = Math.atan2(dx,dy)*180/Math.PI;
-    return isNaN(deg) ? null : Math.round(deg);
+    const deg=Math.atan2(lm[9].x-lm[0].x, lm[9].y-lm[0].y)*180/Math.PI;
+    return isNaN(deg)?null:Math.round(deg);
   }
 
-  // Extract handedness string robustly (API differs between versions)
   function getHandedness(hand){
-    const h = hand.handedness;
-    if(typeof h === 'string') return h; // 'Left' or 'Right'
-    if(Array.isArray(h) && h.length) return h[0].categoryName||h[0].label||'Right';
+    const h=hand.handedness;
+    if(typeof h==='string') return h;
+    if(Array.isArray(h)&&h.length) return h[0].categoryName||h[0].label||'Right';
     return 'Right';
+  }
+
+  // ── Apply front-camera x-flip to a keypoints array ──
+  // TF.js hand-pose-detection@2.0.1 produces NaN when flipHorizontal:true is
+  // passed to estimateHands, so we pass false and flip manually here.
+  function applyFlip(kps, vw, doFlip){
+    if(!doFlip) return kps;
+    return kps.map(p => p ? { ...p, x: vw - p.x } : p);
   }
 
   // ── State ──
@@ -358,25 +351,23 @@
     document.getElementById('dbg-btn').classList.toggle('active',debugMode);
   });
 
-  function updateDebug(hands, vw, vh){
+  function updateDebug(hands,vw,vh){
     if(!debugMode) return;
-    let html = `<div class="dh">─── DEBUG ───</div>`;
-    html += `<div><span class="dk">video size</span><span class="dv">${vw}×${vh}</span></div>`;
-    html += `<div><span class="dk">hands found</span><span class="dv">${hands.length}</span></div>`;
+    let html=`<div class="dh">─── DEBUG ───</div>`;
+    html+=`<div><span class="dk">video size</span><span class="dv">${vw}×${vh}</span></div>`;
+    html+=`<div><span class="dk">facingMode</span><span class="dv">${facingMode}</span></div>`;
+    html+=`<div><span class="dk">hands found</span><span class="dv">${hands.length}</span></div>`;
     if(hands.length){
       const h=hands[0];
       const raw=h.keypoints||[];
-      const hd=getHandedness(h);
-      const isNorm = raw.length && raw[0] && Math.abs(raw[0].x)<=2;
-      html += `<div><span class="dk">handedness</span><span class="dv">${hd} (raw="${JSON.stringify(h.handedness).slice(0,20)}")</span></div>`;
-      html += `<div><span class="dk">keypoints.len</span><span class="dv">${raw.length}</span></div>`;
-      html += `<div><span class="dk">coord type</span><span class="dv">${isNorm?'NORMALIZED→scaled':'PIXEL'}</span></div>`;
-      if(raw[0])  html += `<div><span class="dk">kp[0] WRIST</span><span class="dv">x:${raw[0].x?.toFixed(3)} y:${raw[0].y?.toFixed(3)}</span></div>`;
-      if(raw[8])  html += `<div><span class="dk">kp[8] IDX-TIP</span><span class="dv">x:${raw[8].x?.toFixed(3)} y:${raw[8].y?.toFixed(3)}</span></div>`;
-      if(raw[12]) html += `<div><span class="dk">kp[12] MID-TIP</span><span class="dv">x:${raw[12].x?.toFixed(3)} y:${raw[12].y?.toFixed(3)}</span></div>`;
-      html += `<div><span class="dk">hand.score</span><span class="dv">${h.score?.toFixed(3)||'N/A'}</span></div>`;
+      const p0=raw[0]||{}, p8=raw[8]||{};
+      html+=`<div><span class="dk">handedness</span><span class="dv">${getHandedness(h)}</span></div>`;
+      html+=`<div><span class="dk">keypoints.len</span><span class="dv">${raw.length}</span></div>`;
+      html+=`<div><span class="dk">kp[0] WRIST raw</span><span class="dv">x:${p0.x?.toFixed(2)||'?'} y:${p0.y?.toFixed(2)||'?'}</span></div>`;
+      html+=`<div><span class="dk">kp[8] IDX-TIP raw</span><span class="dv">x:${p8.x?.toFixed(2)||'?'} y:${p8.y?.toFixed(2)||'?'}</span></div>`;
+      html+=`<div><span class="dk">coord NaN?</span><span class="dv">${isNaN(p0.x)?'YES — bug triggered':'NO — OK'}</span></div>`;
     }
-    dbgEl.innerHTML = html;
+    dbgEl.innerHTML=html;
   }
 
   // ── Load model ──
@@ -407,7 +398,11 @@
     });
     video.srcObject=stream;
     await new Promise(r=>{ video.onloadedmetadata=r; });
-    video.play(); resizeCanvas(); video.classList.add('ready');
+    video.play();
+    resizeCanvas();
+    video.classList.add('ready');
+    // Mirror video element visually for front camera
+    video.classList.toggle('mirror', facingMode==='user');
   }
 
   function resizeCanvas(){
@@ -426,10 +421,10 @@
     }
     let hands=[];
     try{
-      hands = await detector.estimateHands(video, { flipHorizontal: facingMode==='user' });
-    }catch(e){
-      try{ hands = await detector.estimateHands(video); }catch(e2){}
-    }
+      // !! Always pass flipHorizontal:false to avoid NaN bug in v2.0.1 !!
+      // We flip coordinates manually in draw() for the front camera.
+      hands = await detector.estimateHands(video, { flipHorizontal: false });
+    }catch(e){ console.warn('estimateHands error:', e); }
     draw(hands);
     animId=requestAnimationFrame(loop);
   }
@@ -441,12 +436,11 @@
     if(canvas.width!==vw||canvas.height!==vh) resizeCanvas();
     ctx.clearRect(0,0,vw,vh);
 
-    updateDebug(hands, vw, vh);
+    updateDebug(hands,vw,vh);
 
-    const badges=document.getElementById('badges');
-    const infoP=document.getElementById('info-panel');
-    const bottomB=document.getElementById('bottom');
-    const badge1=document.getElementById('badge-1');
+    const badges  = document.getElementById('badges');
+    const infoP   = document.getElementById('info-panel');
+    const bottomB = document.getElementById('bottom');
 
     if(!hands||!hands.length){
       badges.classList.remove('show');
@@ -459,12 +453,16 @@
     badges.classList.add('show');
     infoP.classList.add('show');
     bottomB.classList.add('show');
-    badge1.style.display = hands.length>1 ? 'flex':'none';
+    document.getElementById('badge-1').style.display = hands.length>1?'flex':'none';
+
+    // Front camera: flip x coordinates to match mirrored video display
+    const needFlip = (facingMode === 'user');
 
     hands.forEach((hand,hi)=>{
       const raw = hand.keypoints || [];
-      // Normalize to pixel space
-      const lm  = normalizeKps(raw, vw, vh);
+      // Manually flip x for front camera (workaround for flipHorizontal:true NaN bug)
+      const lm  = applyFlip(raw, vw, needFlip);
+
       const handedness = getHandedness(hand);
 
       // ── Skeleton lines ──
@@ -499,14 +497,14 @@
         ctx.fillStyle=col; ctx.fillText(text,x,y);
       }
 
-      // Thumb: CMC→MCP→IP→TIP
+      // Thumb: CMC / MCP / IP
       const tCMC=angle3(lm[0],lm[1],lm[2]);
       const tMCP=angle3(lm[1],lm[2],lm[3]);
       const tIP =angle3(lm[2],lm[3],lm[4]);
       canvasLabel(lm[2], tMCP!==null?tMCP+'°':null, C.thumb);
       canvasLabel(lm[3], tIP !==null?tIP+'°':null,  C.thumb);
 
-      // Index
+      // Index: MCP / PIP / DIP
       const iMCP=angle3(lm[0],lm[5],lm[6]);
       const iPIP=angle3(lm[5],lm[6],lm[7]);
       const iDIP=angle3(lm[6],lm[7],lm[8]);
@@ -534,39 +532,39 @@
       canvasLabel(lm[18], pPIP!==null?pPIP+'°':null, C.pinky);
       canvasLabel(lm[19], pDIP!==null?pDIP+'°':null, C.pinky);
 
-      // Handedness near wrist
+      // Handedness label near wrist
       if(valid(lm[0])){
         ctx.font='bold 14px "Helvetica Neue",sans-serif';
         const hLabel=handedness==='Left'?'左手':'右手';
         const hw=ctx.measureText(hLabel).width+12;
-        ctx.fillStyle='rgba(0,0,0,0.72)';
+        ctx.fillStyle='rgba(0,0,0,0.75)';
         ctx.fillRect(lm[0].x-hw/2, lm[0].y+13, hw, 20);
-        ctx.fillStyle='rgba(255,255,255,0.92)';
+        ctx.fillStyle='rgba(255,255,255,0.95)';
         ctx.textBaseline='top';
         ctx.fillText(hLabel, lm[0].x-hw/2+6, lm[0].y+14);
         ctx.textBaseline='middle';
       }
 
       // ── Metrics ──
-      const open   = openScore(lm);
-      const tilt   = palmTilt(lm);
-      const wAng   = angle3(lm[5],lm[0],lm[17]);
-      const spTI   = spreadAngle(lm[0],lm[2], lm[0],lm[5]);
-      const spIM   = spreadAngle(lm[0],lm[5], lm[0],lm[9]);
-      const spMR   = spreadAngle(lm[0],lm[9], lm[0],lm[13]);
-      const spRP   = spreadAngle(lm[0],lm[13],lm[0],lm[17]);
+      const open  = openScore(lm);
+      const tilt  = palmTilt(lm);
+      const wAng  = angle3(lm[5],lm[0],lm[17]);
+      const spTI  = spreadAngle(lm[0],lm[2], lm[0],lm[5]);
+      const spIM  = spreadAngle(lm[0],lm[5], lm[0],lm[9]);
+      const spMR  = spreadAngle(lm[0],lm[9], lm[0],lm[13]);
+      const spRP  = spreadAngle(lm[0],lm[13],lm[0],lm[17]);
 
       let totalBend=0, bendCnt=0;
       [iPIP,mPIP,rPIP,pPIP].forEach(a=>{
         if(a!==null){ totalBend+=Math.abs(180-a); bendCnt++; }
       });
 
-      // ── DOM (first hand only for detail panel) ──
+      // ── DOM update ──
       if(hi===0){
         document.getElementById('score-val-0').textContent=open;
         document.getElementById('hand-label-0').textContent=handedness==='Left'?'左手':'右手';
 
-        function fmt(...vals){ return vals.map(v=>v!==null?v+'°':'--').join('/'); }
+        function fmt(...v){ return v.map(x=>x!==null?x+'°':'--').join('/'); }
         document.getElementById('a-thumb').textContent  = fmt(tCMC,tMCP,tIP);
         document.getElementById('a-index').textContent  = fmt(iMCP,iPIP,iDIP);
         document.getElementById('a-middle').textContent = fmt(mMCP,mPIP,mDIP);
@@ -588,7 +586,7 @@
       }
     });
 
-    const labels = hands.map(h=>getHandedness(h)==='Left'?'左手':'右手');
+    const labels=hands.map(h=>getHandedness(h)==='Left'?'左手':'右手');
     document.getElementById('hand-info').textContent=
       labels.join(' + ')+' 検出中 ('+hands.length+'手)';
   }
