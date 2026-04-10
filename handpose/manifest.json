@@ -2,7 +2,7 @@
   "name": "HAND – 手の骨格検知",
   "short_name": "HAND",
   "description": "TensorFlow.js を使ったリアルタイム手の骨格検知PWAアプリ",
-  "start_url": "./index.html",
+  "start_url": "/TensorFlowjs-test/handpose/index.html",
   "display": "fullscreen",
   "orientation": "portrait",
   "background_color": "#000000",
