@@ -1,739 +1,679 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="HAND">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="theme-color" content="#000000">
-<title>HAND – 手骨格検知</title>
-
-<!-- PWA Manifest inline as data URI -->
-<link rel="manifest" href="data:application/json,{%22name%22:%22HAND%22,%22short_name%22:%22HAND%22,%22display%22:%22fullscreen%22,%22background_color%22:%22%23000%22,%22theme_color%22:%22%23000%22,%22start_url%22:%22.%22,%22icons%22:[]}">
-
-<!-- iOS splash / icon (1x1 black placeholder) -->
-<link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==">
-
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<title>HAND — 手の骨格検出</title>
+<link rel="manifest" href="manifest.json"/>
+<meta name="theme-color" content="#080c14"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black"/>
+<meta name="apple-mobile-web-app-title" content="HAND"/>
+<link rel="apple-touch-icon" href="icon-192.png"/>
+<!-- 診断用: スクリプト読み込み前にエラーハンドリング -->
+<script>
+window.__diag=[];
+window.__dlog=function(s){window.__diag.push(s);var el=document.getElementById('diag');
+if(el){el.textContent=window.__diag.join('\n');el.style.display='block';}};
+window.onerror=function(m,u,l){window.__dlog('ERR:'+m+' @'+u+':'+l);return false;};
+window.addEventListener('unhandledrejection',function(e){window.__dlog('REJECT:'+e.reason);});
+</script>
+<!-- TF.js core + MediaPipe Hands -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.10.0/dist/tf-core.min.js" onerror="window.__dlog('FAIL:tf-core')"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.10.0/dist/tf-backend-webgl.min.js" onerror="window.__dlog('FAIL:tf-backend-webgl')"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4.10.0/dist/tf-converter.min.js" onerror="window.__dlog('FAIL:tf-converter')"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.min.js" onerror="window.__dlog('FAIL:mediapipe-hands')"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection@2.0.1/dist/hand-pose-detection.… onerror="window.__dlog('FAIL:hand-pose-detection')"></script>
 <style>
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-
-:root{
-  --c-thumb:#ff4dff;
-  --c-index:#4d9fff;
-  --c-middle:#4dff88;
-  --c-ring:#ffe04d;
-  --c-pinky:#c44dff;
-  --panel:rgba(8,8,8,0.80);
-  --border:rgba(255,255,255,0.13);
-  --text:#fff;
-  --sub:rgba(255,255,255,0.55);
-  --mono:'SF Mono','Fira Code','Courier New',monospace;
-  --ui:-apple-system,'Hiragino Sans',sans-serif;
-  --safe-top:env(safe-area-inset-top,0px);
-  --safe-bot:env(safe-area-inset-bottom,0px);
-}
-
-html,body{
-  width:100%;height:100%;
-  background:#000;overflow:hidden;
-  font-family:var(--ui);color:var(--text);
-  -webkit-user-select:none;user-select:none;
-  touch-action:none;
-}
-
-/* ── CAMERA LAYER ── */
-#app{position:relative;width:100vw;height:100dvh;overflow:hidden}
-
-video{
-  position:absolute;inset:0;
-  width:100%;height:100%;
-  object-fit:cover;
-  transform:scaleX(-1);    /* front cam mirror */
-}
-
-#canvas-overlay{
-  position:absolute;inset:0;
-  width:100%;height:100%;
-  transform:scaleX(-1);    /* mirror matches video */
-  pointer-events:none;
-}
-
-/* ── TOP BAR ── */
-#top-bar{
-  position:absolute;
-  top:calc(var(--safe-top) + 10px);
-  left:0;right:0;
-  display:flex;align-items:flex-start;justify-content:space-between;
-  padding:0 14px;
-  z-index:20;
-  pointer-events:none;
-}
-
-#logo-box{
-  background:var(--panel);
-  border:1px solid var(--border);
-  border-radius:16px;
-  padding:8px 14px 6px;
-  display:flex;flex-direction:column;align-items:center;gap:2px;
-  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
-}
-#logo-box .letters{
-  display:flex;align-items:center;gap:1px;
-  font-size:14px;font-weight:800;letter-spacing:3px;
-}
-#logo-box .letters .h{color:var(--sub)}
-#logo-box .letters .a{color:var(--c-index)}
-#logo-box .letters .n{color:var(--c-middle)}
-#logo-box .letters .d{color:var(--c-ring)}
-#logo-box .emoji{font-size:20px;line-height:1}
-#logo-box .gesture-lbl{font-size:11px;color:var(--sub);margin-top:1px}
-
-#fps-box{
-  background:var(--panel);
-  border:1px solid var(--border);
-  border-radius:10px;
-  padding:6px 12px;
-  display:flex;align-items:center;gap:5px;
-  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
-}
-.live-dot{
-  width:6px;height:6px;border-radius:50%;
-  background:#4dff88;box-shadow:0 0 7px #4dff88;
-  animation:blink 1.6s ease-in-out infinite;
-}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
-#fps-num{font-family:var(--mono);font-size:14px;font-weight:700}
-.fps-unit{font-size:11px;color:var(--sub)}
-
-/* ── RIGHT PANEL ── */
-#right-panel{
-  position:absolute;
-  right:10px;top:50%;
-  transform:translateY(-50%);
-  display:flex;flex-direction:column;gap:5px;
-  z-index:20;pointer-events:none;
-}
-
-.fcard{
-  background:var(--panel);
-  border:1px solid var(--border);
-  border-radius:11px;
-  padding:6px 10px;
-  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
-  min-width:172px;
-}
-.fcard .fname{
-  font-size:9.5px;font-weight:800;
-  letter-spacing:1.5px;text-transform:uppercase;
-  margin-bottom:4px;
-}
-.fcard.thumb .fname{color:var(--c-thumb)}
-.fcard.index .fname{color:var(--c-index)}
-.fcard.middle .fname{color:var(--c-middle)}
-.fcard.ring .fname{color:var(--c-ring)}
-.fcard.pinky .fname{color:var(--c-pinky)}
-
-.fcard .fangles{
-  font-family:var(--mono);font-size:11px;
-  color:var(--sub);
-  display:flex;flex-wrap:wrap;gap:5px 8px;
-}
-.fcard .fangles span{white-space:nowrap}
-.fcard .fangles b{color:var(--text);font-weight:700}
-
-/* ── BOTTOM BAR ── */
-#bottom-bar{
-  position:absolute;
-  bottom:calc(var(--safe-bot) + 8px);
-  left:0;right:0;
-  display:flex;flex-direction:column;gap:5px;
-  padding:0 10px;
-  z-index:20;pointer-events:none;
-}
-
-.bcard{
-  background:var(--panel);
-  border:1px solid var(--border);
-  border-radius:13px;
-  padding:8px 14px;
-  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
-}
-#open-row{display:flex;align-items:center;gap:12px}
-.stat{display:flex;align-items:baseline;gap:4px}
-.stat .lbl{font-size:10px;color:var(--sub);letter-spacing:.3px}
-.stat .val{font-family:var(--mono);font-size:15px;font-weight:700}
-.divider{width:1px;height:18px;background:var(--border)}
-
-#spread-row{display:flex;justify-content:space-around;align-items:center}
-.sitem{display:flex;flex-direction:column;align-items:center;gap:1px}
-.sitem .slbl{font-size:9px;color:var(--sub)}
-.sitem .sval{font-family:var(--mono);font-size:12px;font-weight:700}
-
-/* ── SAVE BUTTON ── */
-#save-btn{
-  position:absolute;
-  bottom:calc(var(--safe-bot) + 130px);
-  left:50%;transform:translateX(-50%);
-  z-index:25;pointer-events:all;
-  background:rgba(255,255,255,0.12);
-  border:1.5px solid rgba(255,255,255,0.28);
-  border-radius:50%;
-  width:60px;height:60px;
-  display:flex;align-items:center;justify-content:center;
-  cursor:pointer;
-  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
-  transition:transform .12s,background .12s;
-}
-#save-btn:active{transform:translateX(-50%) scale(.88);background:rgba(255,255,255,0.25)}
-#save-btn svg{width:26px;height:26px;fill:#fff;opacity:.9}
-
-/* ── HAND LABEL (DOM floating) ── */
-#hand-tag{
-  position:absolute;
-  font-size:18px;font-weight:800;
-  text-shadow:0 2px 8px rgba(0,0,0,.9);
-  pointer-events:none;z-index:18;
-  display:none;transition:left .08s,top .08s;
-}
-
-/* ── LOADING / START ── */
-#overlay{
-  position:absolute;inset:0;
-  background:rgba(0,0,0,.93);
-  display:flex;flex-direction:column;
-  align-items:center;justify-content:center;
-  gap:18px;z-index:99;
-  backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
-}
-#overlay .hero{font-size:64px;line-height:1}
-#overlay h1{
-  font-size:26px;font-weight:900;letter-spacing:4px;
-  background:linear-gradient(90deg,var(--c-index),var(--c-middle),var(--c-ring));
-  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
-}
-#overlay p{
-  font-size:13px;color:var(--sub);
-  text-align:center;line-height:1.7;
-  padding:0 28px;max-width:300px;
-}
-#start-btn{
-  background:linear-gradient(135deg,var(--c-index),var(--c-pinky));
-  border:none;border-radius:50px;
-  padding:14px 42px;
-  font-size:15px;font-weight:800;color:#fff;
-  letter-spacing:.8px;cursor:pointer;
-  box-shadow:0 0 32px rgba(77,159,255,.35);
-  transition:transform .13s,box-shadow .13s;
-}
-#start-btn:active{transform:scale(.94);box-shadow:0 0 12px rgba(77,159,255,.15)}
-
-#loading-msg{
-  font-size:12px;color:var(--sub);
-  display:none;text-align:center;
-}
-
-/* ── TOAST ── */
-#toast{
-  position:absolute;
-  top:50%;left:50%;
-  transform:translate(-50%,-50%);
-  background:rgba(77,255,136,.15);
-  border:1px solid rgba(77,255,136,.4);
-  border-radius:12px;
-  padding:12px 22px;
-  font-size:14px;font-weight:700;
-  color:#4dff88;
-  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
-  z-index:50;
-  opacity:0;pointer-events:none;
-  transition:opacity .2s;
-}
+   :root {
+     --bg:    #080c14;
+     --thumb: #ff6b6b;
+     --index: #ffd93d;
+     --mid:   #6bcb77;
+     --ring:  #4d96ff;
+     --pinky: #c77dff;
+     --wrist: #ffffff;
+     --safe-t: env(safe-area-inset-top, 0px);
+     --safe-b: env(safe-area-inset-bottom, 0px);
+   }
+   * { box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent; }
+   html, body {
+     width:100%; height:100dvh; overflow:hidden; background:var(--bg);
+     font-family:'Helvetica Neue','Hiragino Sans',sans-serif;
+   }
+   /* ── Camera ── */
+   #video { position:fixed; inset:0; width:100%; height:100%; object-fit:cover; opacity:0; transition:opacity .5s; }
+   #video.ready { opacity:1; }
+   #video.mirror, #canvas.mirror { transform:scaleX(-1); }
+   #canvas { position:fixed; inset:0; width:100%; height:100%; pointer-events:none; z-index:5; }
+   /* ── Top bar ── */
+   #topbar {
+     position:fixed; top:0; left:0; right:0; z-index:20;
+     padding:calc(var(--safe-t)+6px) 14px 6px;
+     display:flex; align-items:center; gap:8px;
+     background:linear-gradient(rgba(8,12,20,0.85),transparent);
+   }
+   .logo { font-size:16px; font-weight:700; letter-spacing:4px; color:#fff; }
+   .logo em { font-style:normal; color:var(--index); }
+   .spacer { flex:1; }
+   #cam-btn {
+     background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.18);
+     color:#fff; font-size:16px; padding:4px 10px; cursor:pointer; border-radius:6px; line-height:1;
+   }
+   #fps-box {
+     font-size:11px; color:rgba(255,255,255,0.55); padding:3px 8px;
+     border:1px solid rgba(255,255,255,0.12); border-radius:4px;
+     font-family:'Courier New',monospace; letter-spacing:1px;
+   }
+   #status-dot { width:8px; height:8px; border-radius:50%; background:#6bcb77; box-shadow:0 0 6px #6bcb77; animation:blink 1.5s infinite; }
+   #status-dot.loading { background:#ffb800; box-shadow:0 0 6px #ffb800; }
+   #status-dot.error   { background:#ff4444; box-shadow:0 0 6px #ff4444; animation:none; }
+   @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+   /* ── Gesture display ── */
+   #gesture-wrap {
+     position:fixed; top:calc(var(--safe-t)+52px); left:10px; z-index:20;
+     display:none;
+   }
+   #gesture-wrap.show { display:block; }
+   #gesture-box {
+     background:rgba(8,12,20,0.78); border:1px solid rgba(255,255,255,0.15);
+     border-radius:12px; padding:10px 14px; min-width:120px;
+   }
+   #gesture-emoji { font-size:32px; line-height:1; text-align:center; }
+   #gesture-name  { font-size:12px; font-weight:700; color:#fff; text-align:center; margin-top:4px; letter-spacing:1px; }
+   #gesture-conf  { font-size:10px; color:rgba(255,255,255,0.4); text-align:center; margin-top:2px; }
+   /* Second hand gesture */
+   #gesture-wrap2 {
+     position:fixed; top:calc(var(--safe-t)+52px); left:140px; z-index:20;
+     display:none;
+   }
+   #gesture-wrap2.show { display:block; }
+   #gesture-box2 {
+     background:rgba(8,12,20,0.78); border:1px solid rgba(255,255,255,0.1);
+     border-radius:12px; padding:10px 14px; min-width:110px;
+   }
+   #gesture-emoji2 { font-size:28px; line-height:1; text-align:center; }
+   #gesture-name2  { font-size:11px; font-weight:700; color:#fff; text-align:center; margin-top:4px; }
+   /* ── Finger panel (right side) ── */
+   #finger-panel {
+     position:fixed; top:50%; right:8px; z-index:20;
+     transform:translateY(-50%); display:none; flex-direction:column; gap:4px;
+   }
+   #finger-panel.show { display:flex; }
+   .frow {
+     background:rgba(8,12,20,0.78); border-radius:7px; padding:4px 8px;
+     display:flex; flex-direction:column; gap:1px;
+   }
+   .frow-name { font-size:9px; font-weight:700; letter-spacing:1px; margin-bottom:1px; }
+   .frow-vals { display:flex; gap:6px; }
+   .fval { font-size:10px; color:rgba(255,255,255,0.55); white-space:nowrap; }
+   .fval span { font-weight:700; }
+   /* ── Bottom bar ── */
+   #bottom {
+     position:fixed; bottom:0; left:0; right:0; z-index:20;
+     padding:8px 14px calc(var(--safe-b)+10px);
+     background:linear-gradient(transparent, rgba(8,12,20,0.88));
+     display:none; flex-direction:column; gap:4px;
+   }
+   #bottom.show { display:flex; }
+   .brow { font-size:11px; color:rgba(255,255,255,0.5); letter-spacing:.5px; text-align:center; }
+   .brow span { font-weight:700; color:#fff; }
+   #spread-row {
+     display:flex; justify-content:center; gap:8px; flex-wrap:wrap;
+   }
+   .stag {
+     font-size:10px; padding:2px 7px; border-radius:4px;
+     background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.65);
+     white-space:nowrap;
+   }
+   .stag span { font-weight:700; }
+   /* ── Crosshair ── */
+   #crosshair { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); pointer-events:none; z-index:6; }
+   .ch-h { position:absolute; top:50%; left:-14px; right:-14px; height:1.5px; transform:translateY(-50%); background:rgba(255,255,255,0.35); }
+   .ch-v { position:absolute; left:50%; top:-14px; bottom:-14px; width:1.5px; transform:translateX(-50%); background:rgba(255,255,255,0.35); }
+   /* ── Splash ── */
+   #splash { position:fixed; inset:0; z-index:100; background:var(--bg);
+     display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px; padding:40px; }
+   #splash h1 { font-size:26px; letter-spacing:8px; color:#fff; font-weight:300; }
+   #splash h1 em { font-style:normal; color:var(--index); }
+   #splash p { font-size:12px; letter-spacing:1.5px; color:rgba(255,255,255,0.35); text-align:center; line-height:1.9; }
+   #prog-wrap { width:200px; height:2px; background:rgba(255,255,255,0.08); border-radius:1px; }
+   #prog-bar  { height:100%; width:0%; border-radius:1px;
+     background:linear-gradient(90deg,var(--thumb),var(--index),var(--mid),var(--ring),var(--pinky));
+     transition:width .3s; }
+   #splash-msg { font-size:11px; color:rgba(255,255,255,0.38); letter-spacing:2px; }
+   #start-btn { display:none; padding:12px 36px; border:1px solid rgba(255,255,255,0.25);
+     background:rgba(255,255,255,0.05); color:#fff; font-size:13px; letter-spacing:4px;
+     cursor:pointer; border-radius:4px; font-family:inherit; }
+   #start-btn.show { display:block; }
+   .finger-legend { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; }
+   .fl-dot { display:flex; align-items:center; gap:4px; font-size:10px; color:rgba(255,255,255,0.5); }
+   .fl-c { width:8px; height:8px; border-radius:50%; }
+   /* ── Perm ── */
+   #perm { display:none; position:fixed; inset:0; z-index:101; background:var(--bg);
+     flex-direction:column; align-items:center; justify-content:center; gap:22px; padding:40px; text-align:center; }
+   #perm.show { display:flex; }
+   #perm .icon { font-size:52px; }
+   #perm p { font-size:13px; color:rgba(255,255,255,0.55); line-height:1.8; }
+   #perm-btn { padding:12px 36px; border:1px solid rgba(255,255,255,0.25);
+     background:rgba(255,255,255,0.07); color:#fff; font-family:inherit;
+     font-size:13px; letter-spacing:3px; cursor:pointer; border-radius:4px; }
+   /* 診断ログ */
+   #diag {
+     display:none; position:fixed; bottom:10px; left:10px; right:10px; z-index:200;
+     background:rgba(0,0,0,0.9); color:#0f0; font-size:10px; font-family:monospace;
+     padding:8px; border-radius:6px; max-height:40vh; overflow-y:auto; white-space:pre-wrap;
+     border:1px solid rgba(0,255,0,0.3);
+   }
 </style>
 </head>
 <body>
-<div id="app">
-  <video id="video" autoplay playsinline muted></video>
-  <canvas id="canvas-overlay"></canvas>
-
-  <!-- Floating hand label -->
-  <div id="hand-tag">右手</div>
-
-  <!-- TOP BAR -->
-  <div id="top-bar">
-    <div id="logo-box">
-      <div class="letters">
-        <span class="h">H</span><span class="a">A</span><span class="n">N</span><span class="d">D</span>
-        <span style="margin-left:6px;font-size:18px">✋</span>
-      </div>
-      <div class="gesture-lbl" id="gesture-name">---</div>
-    </div>
-    <div id="fps-box">
-      <div class="live-dot"></div>
-      <span id="fps-num">--</span>
-      <span class="fps-unit">FPS</span>
-    </div>
-  </div>
-
-  <!-- RIGHT PANEL -->
-  <div id="right-panel">
-    <div class="fcard thumb">
-      <div class="fname">THUMB 親</div>
-      <div class="fangles">
-        <span>CMC <b id="t-cmc">---</b>°</span>
-        <span>MCP <b id="t-mcp">---</b>°</span>
-        <span>IP <b id="t-ip">---</b>°</span>
-      </div>
-    </div>
-    <div class="fcard index">
-      <div class="fname">INDEX 人</div>
-      <div class="fangles">
-        <span>MCP <b id="i-mcp">---</b>°</span>
-        <span>PIP <b id="i-pip">---</b>°</span>
-        <span>DIP <b id="i-dip">---</b>°</span>
-      </div>
-    </div>
-    <div class="fcard middle">
-      <div class="fname">MIDDLE 中</div>
-      <div class="fangles">
-        <span>MCP <b id="m-mcp">---</b>°</span>
-        <span>PIP <b id="m-pip">---</b>°</span>
-        <span>DIP <b id="m-dip">---</b>°</span>
-      </div>
-    </div>
-    <div class="fcard ring">
-      <div class="fname">RING 薬</div>
-      <div class="fangles">
-        <span>MCP <b id="r-mcp">---</b>°</span>
-        <span>PIP <b id="r-pip">---</b>°</span>
-        <span>DIP <b id="r-dip">---</b>°</span>
-      </div>
-    </div>
-    <div class="fcard pinky">
-      <div class="fname">PINKY 小</div>
-      <div class="fangles">
-        <span>MCP <b id="p-mcp">---</b>°</span>
-        <span>PIP <b id="p-pip">---</b>°</span>
-        <span>DIP <b id="p-dip">---</b>°</span>
-      </div>
-    </div>
-  </div>
-
-  <!-- BOTTOM BAR -->
-  <div id="bottom-bar">
-    <div class="bcard" id="open-row">
-      <div class="stat">
-        <span class="lbl">開度</span>
-        <span class="val" id="openness">--%</span>
-      </div>
-      <div class="divider"></div>
-      <div class="stat">
-        <span class="lbl">手首角</span>
-        <span class="val" id="wrist-ang">--°</span>
-      </div>
-    </div>
-    <div class="bcard" id="spread-row">
-      <div class="sitem"><span class="slbl">親↔人</span><span class="sval" id="sp-ti">--°</span></div>
-      <div class="sitem"><span class="slbl">人↔中</span><span class="sval" id="sp-im">--°</span></div>
-      <div class="sitem"><span class="slbl">中↔薬</span><span class="sval" id="sp-mr">--°</span></div>
-      <div class="sitem"><span class="slbl">薬↔小</span><span class="sval" id="sp-rp">--°</span></div>
-    </div>
-  </div>
-
-  <!-- SAVE (screenshot) BUTTON -->
-  <div id="save-btn" onclick="saveSnapshot()">
-    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-      <path d="M9 3L7.17 5H4C2.9 5 2 5.9 2 7v13c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2h-3.17L15 3H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.65 0-3 1.35-3 3s1.35 3 3 3 3-1.35 3-3-1.35-3-3-3z"/>
-    </svg>
-  </div>
-
-  <div id="toast">📸 保存しました</div>
-
-  <!-- START OVERLAY -->
-  <div id="overlay">
-    <div class="hero">✋</div>
-    <h1>HAND</h1>
-    <p>カメラを使ってリアルタイムで<br>手の骨格・関節角度を検知します。</p>
-    <button id="start-btn" onclick="startApp()">カメラを起動</button>
-    <div id="loading-msg">モデル読み込み中…</div>
-  </div>
+<video id="video" autoplay playsinline muted webkit-playsinline></video>
+<canvas id="canvas"></canvas>
+<div id="crosshair"><div class="ch-h"></div><div class="ch-v"></div></div>
+<!-- Top -->
+<div id="topbar">
+<div class="logo">H<em>A</em>ND</div>
+<div class="spacer"></div>
+<button id="cam-btn">⟳</button>
+<div id="fps-box">-- FPS</div>
+<div id="status-dot" class="loading"></div>
 </div>
-
-<!-- MediaPipe Tasks Vision (WASM – iOS Safari stable) -->
-<script type="module">
-// ── Import MediaPipe Tasks Vision ──────────────────────────────────────────
-import { HandLandmarker, FilesetResolver }
-  from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.js";
-
-// ── CONSTANTS ──────────────────────────────────────────────────────────────
-const COLOR = {
-  thumb:  '#ff4dff',
-  index:  '#4d9fff',
-  middle: '#4dff88',
-  ring:   '#ffe04d',
-  pinky:  '#c44dff',
+<!-- Debug bar (hidden normally) -->
+<div id="debug-bar" style="display:none;position:fixed;top:calc(var(--safe-t,0px)+52px);left:0;right:0;
+background:rgba(255,60,60,0.9);color:#fff;font-size:11px;padding:6px 14px;z-index:50;
+text-align:center;letter-spacing:.5px;"></div>
+<!-- Gesture (hand 1) -->
+<div id="gesture-wrap">
+<div id="gesture-box">
+<div id="gesture-emoji">✋</div>
+<div id="gesture-name">--</div>
+<div id="gesture-conf"></div>
+</div>
+</div>
+<!-- Gesture (hand 2) -->
+<div id="gesture-wrap2">
+<div id="gesture-box2">
+<div id="gesture-emoji2"></div>
+<div id="gesture-name2"></div>
+</div>
+</div>
+<!-- Finger angles (right panel) -->
+<div id="finger-panel">
+<div class="frow" style="border-left:2px solid var(--thumb)">
+<div class="frow-name" style="color:var(--thumb)">THUMB 親</div>
+<div class="frow-vals">
+<div class="fval">CMC <span id="a-t0">--</span>°</div>
+<div class="fval">MCP <span id="a-t1">--</span>°</div>
+<div class="fval">IP <span id="a-t2">--</span>°</div>
+</div>
+</div>
+<div class="frow" style="border-left:2px solid var(--index)">
+<div class="frow-name" style="color:var(--index)">INDEX 人</div>
+<div class="frow-vals">
+<div class="fval">MCP <span id="a-i0">--</span>°</div>
+<div class="fval">PIP <span id="a-i1">--</span>°</div>
+<div class="fval">DIP <span id="a-i2">--</span>°</div>
+</div>
+</div>
+<div class="frow" style="border-left:2px solid var(--mid)">
+<div class="frow-name" style="color:var(--mid)">MIDDLE 中</div>
+<div class="frow-vals">
+<div class="fval">MCP <span id="a-m0">--</span>°</div>
+<div class="fval">PIP <span id="a-m1">--</span>°</div>
+<div class="fval">DIP <span id="a-m2">--</span>°</div>
+</div>
+</div>
+<div class="frow" style="border-left:2px solid var(--ring)">
+<div class="frow-name" style="color:var(--ring)">RING 薬</div>
+<div class="frow-vals">
+<div class="fval">MCP <span id="a-r0">--</span>°</div>
+<div class="fval">PIP <span id="a-r1">--</span>°</div>
+<div class="fval">DIP <span id="a-r2">--</span>°</div>
+</div>
+</div>
+<div class="frow" style="border-left:2px solid var(--pinky)">
+<div class="frow-name" style="color:var(--pinky)">PINKY 小</div>
+<div class="frow-vals">
+<div class="fval">MCP <span id="a-p0">--</span>°</div>
+<div class="fval">PIP <span id="a-p1">--</span>°</div>
+<div class="fval">DIP <span id="a-p2">--</span>°</div>
+</div>
+</div>
+</div>
+<!-- Bottom -->
+<div id="bottom">
+<div class="brow">開度 <span id="v-open">--</span>% &nbsp;|&nbsp; 手首角 <span id="v-wrist">--</span>°</div>
+<div id="spread-row">
+<div class="stag">親↔人 <span id="sp-ti">--</span>°</div>
+<div class="stag">人↔中 <span id="sp-im">--</span>°</div>
+<div class="stag">中↔薬 <span id="sp-mr">--</span>°</div>
+<div class="stag">薬↔小 <span id="sp-rp">--</span>°</div>
+</div>
+</div>
+<!-- Splash -->
+<div id="splash">
+<h1>H<em>A</em>ND</h1>
+<p>21点手骨格検出 · 両手対応<br>ジェスチャー認識 · 関節角度</p>
+<div class="finger-legend">
+<div class="fl-dot"><div class="fl-c" style="background:var(--thumb)"></div>親指</div>
+<div class="fl-dot"><div class="fl-c" style="background:var(--index)"></div>人差し指</div>
+<div class="fl-dot"><div class="fl-c" style="background:var(--mid)"></div>中指</div>
+<div class="fl-dot"><div class="fl-c" style="background:var(--ring)"></div>薬指</div>
+<div class="fl-dot"><div class="fl-c" style="background:var(--pinky)"></div>小指</div>
+</div>
+<div id="prog-wrap"><div id="prog-bar"></div></div>
+<div id="splash-msg">モデルを読み込み中…</div>
+<button id="start-btn">▶ カメラ起動</button>
+</div>
+<div id="perm">
+<div class="icon">🤚</div>
+<p>カメラへのアクセスが必要です<br>次の画面で「許可」を選択してください</p>
+<button id="perm-btn">アクセスを許可</button>
+</div>
+<div id="diag"></div>
+<script>
+(function(){
+/*
+MediaPipe Hands 21 keypoints:
+0: WRIST
+1:THUMB_CMC  2:THUMB_MCP   3:THUMB_IP    4:THUMB_TIP
+5:INDEX_MCP  6:INDEX_PIP   7:INDEX_DIP   8:INDEX_TIP
+9:MID_MCP   10:MID_PIP    11:MID_DIP    12:MID_TIP
+13:RING_MCP  14:RING_PIP   15:RING_DIP   16:RING_TIP
+17:PINKY_MCP 18:PINKY_PIP  19:PINKY_DIP  20:PINKY_TIP
+*/
+// Finger color palette
+const COL = {
+   thumb: '#ff6b6b', index: '#ffd93d', mid: '#6bcb77',
+   ring:  '#4d96ff', pinky: '#c77dff', wrist:'#ffffff'
 };
-
-// MediaPipe HandLandmarker landmark index map
-const L = {
-  WRIST:0,
-  T_CMC:1,T_MCP:2,T_IP:3,T_TIP:4,
-  I_MCP:5,I_PIP:6,I_DIP:7,I_TIP:8,
-  M_MCP:9,M_PIP:10,M_DIP:11,M_TIP:12,
-  R_MCP:13,R_PIP:14,R_DIP:15,R_TIP:16,
-  P_MCP:17,P_PIP:18,P_DIP:19,P_TIP:20,
-};
-
-const FINGER_CHAINS = {
-  thumb:  [L.WRIST,L.T_CMC,L.T_MCP,L.T_IP,L.T_TIP],
-  index:  [L.WRIST,L.I_MCP,L.I_PIP,L.I_DIP,L.I_TIP],
-  middle: [L.WRIST,L.M_MCP,L.M_PIP,L.M_DIP,L.M_TIP],
-  ring:   [L.WRIST,L.R_MCP,L.R_PIP,L.R_DIP,L.R_TIP],
-  pinky:  [L.WRIST,L.P_MCP,L.P_PIP,L.P_DIP,L.P_TIP],
-};
-
-const PALM_RING = [L.WRIST,L.I_MCP,L.M_MCP,L.R_MCP,L.P_MCP,L.WRIST];
-
-const GESTURES = {
-  open:'バー',fist:'グー',peace:'ピース',
-  point:'指差し',thumbUp:'グッド',other:'---',
-};
-
-// ── DOM ────────────────────────────────────────────────────────────────────
-const video     = document.getElementById('video');
-const canvas    = document.getElementById('canvas-overlay');
-const ctx       = canvas.getContext('2d');
-const handTag   = document.getElementById('hand-tag');
-const overlayEl = document.getElementById('overlay');
-const loadMsg   = document.getElementById('loading-msg');
-
-// ── STATE ──────────────────────────────────────────────────────────────────
-let landmarker  = null;
-let rafId       = null;
-let lastTime    = -1;
-let fpsSmooth   = 0;
-let lastT       = performance.now();
-
-// ── MATH ───────────────────────────────────────────────────────────────────
-function angle3(A,B,C){
-  const ax=A.x-B.x,ay=A.y-B.y,az=(A.z||0)-(B.z||0);
-  const cx=C.x-B.x,cy=C.y-B.y,cz=(C.z||0)-(B.z||0);
-  const dot=ax*cx+ay*cy+az*cz;
-  const ma=Math.sqrt(ax*ax+ay*ay+az*az);
-  const mc=Math.sqrt(cx*cx+cy*cy+cz*cz);
-  if(!ma||!mc) return 180;
-  return Math.round(Math.acos(Math.max(-1,Math.min(1,dot/(ma*mc))))*180/Math.PI);
+// Skeleton connections  [from, to, color]
+const CONN = [
+   // Palm
+   [0,1,COL.thumb],[0,5,COL.index],[0,9,COL.mid],[0,13,COL.ring],[0,17,COL.pinky],
+   [1,5,'#888'],[5,9,'#888'],[9,13,'#888'],[13,17,'#888'],
+   // Thumb
+   [1,2,COL.thumb],[2,3,COL.thumb],[3,4,COL.thumb],
+   // Index
+   [5,6,COL.index],[6,7,COL.index],[7,8,COL.index],
+   // Middle
+   [9,10,COL.mid],[10,11,COL.mid],[11,12,COL.mid],
+   // Ring
+   [13,14,COL.ring],[14,15,COL.ring],[15,16,COL.ring],
+   // Pinky
+   [17,18,COL.pinky],[18,19,COL.pinky],[19,20,COL.pinky],
+];
+const JOINT_COL = [
+   COL.wrist,
+   COL.thumb,COL.thumb,COL.thumb,COL.thumb,
+   COL.index,COL.index,COL.index,COL.index,
+   COL.mid,COL.mid,COL.mid,COL.mid,
+   COL.ring,COL.ring,COL.ring,COL.ring,
+   COL.pinky,COL.pinky,COL.pinky,COL.pinky,
+];
+// ── Math helpers ──
+function dist(a,b){ return Math.sqrt((a.x-b.x)**2+(a.y-b.y)**2); }
+function angle3(a,m,b){
+   const ax=a.x-m.x,ay=a.y-m.y,bx=b.x-m.x,by=b.y-m.y;
+   const la=Math.sqrt(ax*ax+ay*ay),lb=Math.sqrt(bx*bx+by*by);
+   if(!la||!lb) return null;
+   return Math.round(Math.acos(Math.max(-1,Math.min(1,(ax*bx+ay*by)/(la*lb))))*180/Math.PI);
 }
-
-function spreadAng(tA,tB,w){
-  const ax=tA.x-w.x,ay=tA.y-w.y;
-  const bx=tB.x-w.x,by=tB.y-w.y;
-  const dot=ax*bx+ay*by;
-  const ma=Math.sqrt(ax*ax+ay*ay),mb=Math.sqrt(bx*bx+by*by);
-  if(!ma||!mb) return 0;
-  return Math.round(Math.acos(Math.max(-1,Math.min(1,dot/(ma*mb))))*180/Math.PI);
+function spreadAngle(wrist,a,b){
+   // angle between two rays from wrist to fingertip
+   return angle3(a,wrist,b);
 }
-
-function wristAng(w,im){
-  return Math.round(Math.atan2(im.y-w.y,im.x-w.x)*180/Math.PI);
+function lineAngle(a,b){
+   if(!a||!b||isNaN(a.x)||isNaN(b.x)) return null;
+   return Math.round(Math.atan2(b.y-a.y,b.x-a.x)*180/Math.PI);
 }
-
-function openness(lm){
-  const w=lm[L.WRIST];
-  const ref=Math.hypot(lm[L.M_MCP].x-w.x,lm[L.M_MCP].y-w.y)*2||1;
-  const tips=[L.T_TIP,L.I_TIP,L.M_TIP,L.R_TIP,L.P_TIP];
-  const sum=tips.reduce((s,i)=>s+Math.hypot(lm[i].x-w.x,lm[i].y-w.y),0);
-  return Math.min(100,Math.round(sum/tips.length/ref*100));
+// ── Finger extension check ──
+function isExtended(tip, dip, pip, mcp, wrist){
+   // ratio: tip farther from wrist than mcp?
+   const tipD = dist(tip, wrist);
+   const mcpD = dist(mcp, wrist);
+   return tipD > mcpD * 1.15;
 }
-
-function gesture(lm){
-  const w=lm[L.WRIST];
-  const isOpen=i=>{
-    const tip=lm[i],base=lm[i-3>=0?i-3:L.T_CMC];
-    return Math.hypot(tip.x-w.x,tip.y-w.y)>
-           Math.hypot(base.x-w.x,base.y-w.y)*0.75;
-  };
-  const th=isOpen(L.T_TIP),ix=isOpen(L.I_TIP),
-        mi=isOpen(L.M_TIP),ri=isOpen(L.R_TIP),pi=isOpen(L.P_TIP);
-  if(th&&ix&&mi&&ri&&pi) return GESTURES.open;
-  if(!th&&!ix&&!mi&&!ri&&!pi) return GESTURES.fist;
-  if(!th&&ix&&mi&&!ri&&!pi) return GESTURES.peace;
-  if(!th&&ix&&!mi&&!ri&&!pi) return GESTURES.point;
-  if(th&&!ix&&!mi&&!ri&&!pi) return GESTURES.thumbUp;
-  return GESTURES.other;
+function isThumbExtended(tip, ip, mcp, cmc, wrist){
+   return dist(tip, wrist) > dist(mcp, wrist) * 1.1;
 }
-
-// ── DRAW ───────────────────────────────────────────────────────────────────
-function px(lm){ return {x: lm.x * canvas.width, y: lm.y * canvas.height}; }
-
-function drawHand(landmarks, handedness){
-  ctx.save();
-
-  // Palm ring
-  ctx.beginPath();
-  PALM_RING.forEach((i,n)=>{
-    const p=px(landmarks[i]);
-    n===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y);
-  });
-  ctx.strokeStyle='rgba(255,255,255,0.18)';
-  ctx.lineWidth=2;
-  ctx.stroke();
-
-  // Finger chains + glow
-  for(const [name,chain] of Object.entries(FINGER_CHAINS)){
-    const col=COLOR[name];
-    ctx.shadowColor=col;ctx.shadowBlur=10;
-    ctx.strokeStyle=col;ctx.lineWidth=3.5;
-    ctx.beginPath();
-    chain.forEach((i,n)=>{
-      const p=px(landmarks[i]);
-      n===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y);
-    });
-    ctx.stroke();
-
-    // Joint dots
-    chain.forEach((i,n)=>{
-      const p=px(landmarks[i]);
-      const isTip=n===chain.length-1;
-      ctx.beginPath();
-      ctx.arc(p.x,p.y,isTip?7:4,0,Math.PI*2);
-      ctx.fillStyle=isTip?col:'#ffffff';
-      ctx.shadowColor=col;ctx.shadowBlur=isTip?14:6;
-      ctx.fill();
-    });
-  }
-
-  // Wrist dot
-  const wp=px(landmarks[L.WRIST]);
-  ctx.beginPath();ctx.arc(wp.x,wp.y,9,0,Math.PI*2);
-  ctx.fillStyle='#ffffff';ctx.shadowColor='#fff';ctx.shadowBlur=16;
-  ctx.fill();
-
-  // Angle badges on each finger shaft
-  const badges=[
-    {idx:L.I_MCP,tip:L.I_TIP,col:COLOR.index},
-    {idx:L.M_MCP,tip:L.M_TIP,col:COLOR.middle},
-    {idx:L.R_MCP,tip:L.R_TIP,col:COLOR.ring},
-    {idx:L.P_MCP,tip:L.P_TIP,col:COLOR.pinky},
-  ];
-
-  ctx.shadowBlur=0;
-  badges.forEach(({idx,tip,col})=>{
-    const base=px(landmarks[idx]),tipP=px(landmarks[tip]);
-    const mx=(base.x+tipP.x)/2,my=(base.y+tipP.y)/2;
-    const ang=angle3(landmarks[L.WRIST],landmarks[idx],landmarks[tip]);
-    const lbl=ang+'°';
-    ctx.font='bold 12px SF Mono,Courier New,monospace';
-    ctx.textAlign='center';ctx.textBaseline='middle';
-    const tw=ctx.measureText(lbl).width+14;
-    // Badge BG
-    ctx.fillStyle='rgba(0,0,0,0.65)';
-    ctx.beginPath();
-    ctx.roundRect(mx-tw/2,my-11,tw,22,6);
-    ctx.fill();
-    ctx.strokeStyle=col;ctx.lineWidth=1;
-    ctx.stroke();
-    ctx.fillStyle='#fff';
-    ctx.fillText(lbl,mx,my);
-  });
-
-  // Thumb shaft angle badge
-  {
-    const base=px(landmarks[L.T_MCP]),tipP=px(landmarks[L.T_TIP]);
-    const mx=(base.x+tipP.x)/2,my=(base.y+tipP.y)/2;
-    const ang=angle3(landmarks[L.T_CMC],landmarks[L.T_MCP],landmarks[L.T_IP]);
-    const lbl=ang+'°';
-    ctx.font='bold 12px SF Mono,Courier New,monospace';
-    const tw=ctx.measureText(lbl).width+14;
-    ctx.fillStyle='rgba(0,0,0,0.65)';
-    ctx.beginPath();ctx.roundRect(mx-tw/2,my-11,tw,22,6);ctx.fill();
-    ctx.strokeStyle=COLOR.thumb;ctx.lineWidth=1;ctx.stroke();
-    ctx.fillStyle='#fff';ctx.fillText(lbl,mx,my);
-  }
-
-  ctx.restore();
-
-  // Floating hand label (DOM – not mirrored by canvas transform)
-  const rect=canvas.getBoundingClientRect();
-  const scX=rect.width/canvas.width,scY=rect.height/canvas.height;
-  // canvas is scaleX(-1), so DOM x = rect.right - wrist.x*scX
-  const domX=rect.right-(landmarks[L.WRIST].x*canvas.width)*scX - 40;
-  const domY=rect.top +(landmarks[L.WRIST].y*canvas.height)*scY + 14;
-  handTag.style.left=domX+'px';
-  handTag.style.top =domY+'px';
-  handTag.style.display='block';
-  handTag.textContent=handedness==='Left'?'右手':'左手'; // mirrored cam
+// ── Gesture recognition ──
+const GESTURES = [
+   // [emoji, name, fn(ext)] where ext = [thumb, index, middle, ring, pinky]
+   ['✊','グー',   e => !e[0]&&!e[1]&&!e[2]&&!e[3]&&!e[4]],
+   ['✌️','チョキ', e => !e[0]&&e[1]&&e[2]&&!e[3]&&!e[4]],
+   ['🖐️','パー',   e => e[1]&&e[2]&&e[3]&&e[4]],
+   ['👍','親指UP', e => e[0]&&!e[1]&&!e[2]&&!e[3]&&!e[4]],
+   ['☝️','人差し指',e => !e[0]&&e[1]&&!e[2]&&!e[3]&&!e[4]],
+   ['🤙','シャカ', e => e[0]&&!e[1]&&!e[2]&&!e[3]&&e[4]],
+   ['🤘','ロック', e => !e[0]&&e[1]&&!e[2]&&!e[3]&&e[4]],
+   ['🖖','スポック',e => !e[0]&&e[1]&&e[2]&&e[3]&&e[4]],  // Vulcan
+   ['🤞','クロス', e => !e[0]&&e[1]&&e[2]&&!e[3]&&!e[4]], // same as peace but handled separately
+   ['👌','OK',     e => e[0]&&!e[1]&&e[2]&&e[3]&&e[4]],
+   ['🖕','中指',   e => !e[0]&&!e[1]&&e[2]&&!e[3]&&!e[4]],
+   ['🤟','I LOVE', e => e[0]&&e[1]&&!e[2]&&!e[3]&&e[4]],
+];
+function detectGesture(kps){
+   const w=kps[0];
+   const ext=[
+     isThumbExtended(kps[4],kps[3],kps[2],kps[1],w),
+     isExtended(kps[8],kps[7],kps[6],kps[5],w),
+     isExtended(kps[12],kps[11],kps[10],kps[9],w),
+     isExtended(kps[16],kps[15],kps[14],kps[13],w),
+     isExtended(kps[20],kps[19],kps[18],kps[17],w),
+   ];
+   for(const [em,nm,fn] of GESTURES){
+     if(fn(ext)) return {emoji:em,name:nm,extended:ext};
+   }
+   return {emoji:'🤔',name:'？',extended:ext};
 }
-
-// ── UI UPDATE ──────────────────────────────────────────────────────────────
-function setText(id,v){ document.getElementById(id).textContent=v; }
-
-function updatePanel(lm, handedness){
-  // Thumb
-  setText('t-cmc', angle3(lm[L.WRIST],lm[L.T_CMC],lm[L.T_MCP]));
-  setText('t-mcp', angle3(lm[L.T_CMC],lm[L.T_MCP],lm[L.T_IP]));
-  setText('t-ip',  angle3(lm[L.T_MCP],lm[L.T_IP], lm[L.T_TIP]));
-  // Index
-  setText('i-mcp', angle3(lm[L.WRIST], lm[L.I_MCP],lm[L.I_PIP]));
-  setText('i-pip', angle3(lm[L.I_MCP], lm[L.I_PIP],lm[L.I_DIP]));
-  setText('i-dip', angle3(lm[L.I_PIP], lm[L.I_DIP],lm[L.I_TIP]));
-  // Middle
-  setText('m-mcp', angle3(lm[L.WRIST], lm[L.M_MCP],lm[L.M_PIP]));
-  setText('m-pip', angle3(lm[L.M_MCP], lm[L.M_PIP],lm[L.M_DIP]));
-  setText('m-dip', angle3(lm[L.M_PIP], lm[L.M_DIP],lm[L.M_TIP]));
-  // Ring
-  setText('r-mcp', angle3(lm[L.WRIST], lm[L.R_MCP],lm[L.R_PIP]));
-  setText('r-pip', angle3(lm[L.R_MCP], lm[L.R_PIP],lm[L.R_DIP]));
-  setText('r-dip', angle3(lm[L.R_PIP], lm[L.R_DIP],lm[L.R_TIP]));
-  // Pinky
-  setText('p-mcp', angle3(lm[L.WRIST], lm[L.P_MCP],lm[L.P_PIP]));
-  setText('p-pip', angle3(lm[L.P_MCP], lm[L.P_PIP],lm[L.P_DIP]));
-  setText('p-dip', angle3(lm[L.P_PIP], lm[L.P_DIP],lm[L.P_TIP]));
-  // Bottom stats
-  setText('openness',  openness(lm)+'%');
-  setText('wrist-ang', wristAng(lm[L.WRIST],lm[L.I_MCP])+'°');
-  setText('sp-ti', spreadAng(lm[L.T_TIP],lm[L.I_TIP],lm[L.WRIST])+'°');
-  setText('sp-im', spreadAng(lm[L.I_TIP],lm[L.M_TIP],lm[L.WRIST])+'°');
-  setText('sp-mr', spreadAng(lm[L.M_TIP],lm[L.R_TIP],lm[L.WRIST])+'°');
-  setText('sp-rp', spreadAng(lm[L.R_TIP],lm[L.P_TIP],lm[L.WRIST])+'°');
-  // Gesture
-  setText('gesture-name', gesture(lm));
+// ── State ──
+let detector=null,stream=null,animId=null,running=false;
+let facingMode='user'; // default front camera for hands
+let lastTime=0,fpsArr=[];
+const video=document.getElementById('video');
+const canvas=document.getElementById('canvas');
+const ctx=canvas.getContext('2d');
+// ── Load model ──
+async function loadModel(){
+   const bar=document.getElementById('prog-bar');
+   const msg=document.getElementById('splash-msg');
+   window.__dlog('loadModel start');
+   window.__dlog('tf='+(typeof tf)+' hpd='+(typeof handPoseDetection));
+   try {
+     bar.style.width='8%'; msg.textContent='初期化中…';
+     // mediapipe runtime を優先試行 (PCで動作実績あり)
+     window.__dlog('Trying mediapipe runtime...');
+     detector=await handPoseDetection.createDetector(
+       handPoseDetection.SupportedModels.MediaPipeHands,
+       {
+         runtime: 'mediapipe',
+         solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240',
+         modelType: 'lite',
+         maxHands: 2
+       }
+     );
+     window.__dlog('mediapipe runtime OK');
+   } catch(e1) {
+     window.__dlog('mediapipe FAIL: '+e1.message);
+     // フォールバック: tfjs runtime
+     try {
+       window.__dlog('Trying tfjs runtime fallback...');
+       await tf.setBackend('webgl'); await tf.ready();
+       window.__dlog('tf backend: '+tf.getBackend());
+       detector=await handPoseDetection.createDetector(
+         handPoseDetection.SupportedModels.MediaPipeHands,
+         { runtime:'tfjs', modelType:'lite', maxHands:2 }
+       );
+       window.__dlog('tfjs runtime OK (NaNの可能性あり)');
+     } catch(e2) {
+       window.__dlog('tfjs FAIL: '+e2.message);
+       throw e2;
+     }
+   }
+   bar.style.width='90%'; msg.textContent='準備完了 — 21点 · 両手';
+   await new Promise(r=>setTimeout(r,400));
+   bar.style.width='100%';
+   await new Promise(r=>setTimeout(r,150));
+   document.getElementById('start-btn').classList.add('show');
+   msg.textContent='タップして開始';
 }
-
-function clearPanel(){
-  ['t-cmc','t-mcp','t-ip',
-   'i-mcp','i-pip','i-dip',
-   'm-mcp','m-pip','m-dip',
-   'r-mcp','r-pip','r-dip',
-   'p-mcp','p-pip','p-dip'].forEach(id=>setText(id,'---'));
-  setText('openness','--%');setText('wrist-ang','--°');
-  ['sp-ti','sp-im','sp-mr','sp-rp'].forEach(id=>setText(id,'--°'));
-  setText('gesture-name','---');
-  handTag.style.display='none';
+// ── Camera ──
+async function startCamera(){
+   if(stream) stream.getTracks().forEach(t=>t.stop());
+   stream=await navigator.mediaDevices.getUserMedia({
+     video:{facingMode:{ideal:facingMode},width:{ideal:1280},height:{ideal:720}},
+     audio:false
+   });
+   video.srcObject=stream;
+   await new Promise(r=>{video.onloadedmetadata=r;});
+   video.play();
+   // iOS Safari: videoWidthがmetadata後も0のことがあるため実サイズを待つ
+   await new Promise(r=>{
+     const check=()=>{ if(video.videoWidth>0){ r(); } else { requestAnimationFrame(check); }};
+     check();
+   });
+   resizeCanvas();
+   video.classList.add('ready');
+   // 前面カメラは鏡像表示 (videoのみCSS反転、canvasは座標で反転)
+   if(facingMode==='user'){
+     video.classList.add('mirror');
+   } else {
+     video.classList.remove('mirror');
+   }
+   canvas.classList.remove('mirror');
 }
-
-// ── DETECT LOOP ────────────────────────────────────────────────────────────
-function loop(timestamp){
-  rafId=requestAnimationFrame(loop);
-
-  // Sync canvas size to video
-  if(canvas.width!==video.videoWidth||canvas.height!==video.videoHeight){
-    canvas.width=video.videoWidth||640;
-    canvas.height=video.videoHeight||480;
-  }
-
-  // FPS
-  const now=performance.now();
-  const dt=now-lastT;lastT=now;
-  fpsSmooth=fpsSmooth*.88+(1000/dt)*.12;
-  setText('fps-num',Math.round(fpsSmooth));
-
-  // Detect (only if new frame)
-  if(video.readyState<2){ctx.clearRect(0,0,canvas.width,canvas.height);return;}
-
-  let results;
-  try{
-    results=landmarker.detectForVideo(video,timestamp);
-  }catch(e){return;}
-
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-
-  if(results.landmarks&&results.landmarks.length>0){
-    const lm=results.landmarks[0];                   // normalized 2D
-    const hand=results.handedness[0][0].categoryName; // 'Left'|'Right'
-    drawHand(lm,hand);
-    updatePanel(lm,hand);
-  }else{
-    clearPanel();
-  }
+function resizeCanvas(){
+   // Canvasを画面サイズに合わせる（videoサイズではなく）
+   canvas.width  = window.innerWidth;
+   canvas.height = window.innerHeight;
 }
-
-// ── SAVE SNAPSHOT ──────────────────────────────────────────────────────────
-window.saveSnapshot=function(){
-  // Composite: video + overlay on an offscreen canvas
-  const off=document.createElement('canvas');
-  off.width=canvas.width||640;
-  off.height=canvas.height||480;
-  const oc=off.getContext('2d');
-
-  // Draw video (mirrored to match display)
-  oc.save();
-  oc.translate(off.width,0);oc.scale(-1,1);
-  oc.drawImage(video,0,0,off.width,off.height);
-  oc.restore();
-
-  // Draw overlay (canvas is already mirrored in CSS, so draw mirrored here too)
-  oc.save();
-  oc.translate(off.width,0);oc.scale(-1,1);
-  oc.drawImage(canvas,0,0,off.width,off.height);
-  oc.restore();
-
-  off.toBlob(blob=>{
-    const url=URL.createObjectURL(blob);
-    const a=document.createElement('a');
-    a.href=url;
-    a.download='hand_'+Date.now()+'.png';
-    a.click();
-    setTimeout(()=>URL.revokeObjectURL(url),5000);
-
-    // Toast
-    const toast=document.getElementById('toast');
-    toast.style.opacity='1';
-    setTimeout(()=>toast.style.opacity='0',1800);
-  },'image/png');
-};
-
-// ── START APP ──────────────────────────────────────────────────────────────
-window.startApp=async function(){
-  const startBtn=document.getElementById('start-btn');
-  startBtn.disabled=true;startBtn.textContent='起動中…';
-  loadMsg.style.display='block';
-
-  // 1. Camera
-  let stream;
-  try{
-    stream=await navigator.mediaDevices.getUserMedia({
-      video:{facingMode:'user',width:{ideal:1280},height:{ideal:720}},
-      audio:false,
-    });
-  }catch(e){
-    alert('カメラへのアクセスが拒否されました。\nブラウザの設定でカメラを許可してください。');
-    startBtn.disabled=false;startBtn.textContent='カメラを起動';
-    loadMsg.style.display='none';return;
-  }
-  video.srcObject=stream;
-  await new Promise(r=>{video.onloadedmetadata=r;});
-  await video.play();
-
-  // 2. MediaPipe HandLandmarker (WASM)
-  loadMsg.textContent='AIモデル読み込み中…（初回のみ時間がかかります）';
-  try{
-    const vision=await FilesetResolver.forVisionTasks(
-      'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
-    );
-    landmarker=await HandLandmarker.createFromOptions(vision,{
-      baseOptions:{
-        modelAssetPath:
-          'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
-        delegate:'GPU',  // falls back to CPU on unsupported devices
-      },
-      runningMode:'VIDEO',
-      numHands:1,
-      minHandDetectionConfidence:0.5,
-      minHandPresenceConfidence:0.5,
-      minTrackingConfidence:0.5,
-    });
-  }catch(e){
-    alert('モデルの読み込みに失敗しました。\nインターネット接続を確認して再試行してください。\n'+e.message);
-    startBtn.disabled=false;startBtn.textContent='カメラを起動';
-    loadMsg.style.display='none';return;
-  }
-
-  // 3. Hide overlay, start loop
-  overlayEl.style.display='none';
-  loop(performance.now());
-};
+// object-fit:cover と同じ変換でキーポイントを画面座標へ変換
+function toScreen(kps){
+   const vw = video.videoWidth  || 1;
+   const vh = video.videoHeight || 1;
+   const dw = canvas.width;
+   const dh = canvas.height;
+   const scale = Math.max(dw / vw, dh / vh);
+   const ox = (dw - vw * scale) / 2;
+   const oy = (dh - vh * scale) / 2;
+   const mirror = (facingMode === 'user');
+   return kps.map(p => ({
+     x: mirror ? (dw - (p.x * scale + ox)) : (p.x * scale + ox),
+     y: p.y * scale + oy,
+     score: p.score,
+     name: p.name
+   }));
+}
+// ── Detection loop ──
+async function loop(){
+   if(!running) return;
+   const now=performance.now(),dt=now-lastTime; lastTime=now;
+   if(dt>0){
+     fpsArr.push(1000/dt); if(fpsArr.length>8) fpsArr.shift();
+     document.getElementById('fps-box').textContent=
+       Math.round(fpsArr.reduce((a,b)=>a+b)/fpsArr.length)+' FPS';
+   }
+   let hands=[];
+   try{
+     hands=await detector.estimateHands(video,{flipHorizontal:false});
+   }catch(e){
+     document.getElementById('debug-bar').textContent='検出エラー: '+e.message;
+     document.getElementById('debug-bar').style.display='block';
+   }
+   draw(hands);
+   animId=requestAnimationFrame(loop);
+}
+// ── Draw ──
+function draw(hands){
+   const vw = video.videoWidth, vh = video.videoHeight;
+   // Canvasサイズを画面に合わせて更新
+   if(canvas.width !== window.innerWidth || canvas.height !== window.innerHeight) resizeCanvas();
+   ctx.clearRect(0, 0, canvas.width, canvas.height);
+   const gWrap  = document.getElementById('gesture-wrap');
+   const gWrap2 = document.getElementById('gesture-wrap2');
+   const fPanel = document.getElementById('finger-panel');
+   const bottom = document.getElementById('bottom');
+   if(!hands.length || !vw || !vh){
+     gWrap.classList.remove('show'); gWrap2.classList.remove('show');
+     fPanel.classList.remove('show'); bottom.classList.remove('show');
+     return;
+   }
+   gWrap.classList.add('show');
+   fPanel.classList.add('show');
+   bottom.classList.add('show');
+   hands.forEach((hand, hi) => {
+     // scoreを補完しつつ、object-fit:cover座標変換を適用
+     const rawKps = hand.keypoints.map(p => ({
+       x: p.x, y: p.y,
+       score: (p.score !== undefined && p.score !== null) ? p.score : 1.0,
+       name: p.name
+     }));
+     const kps = toScreen(rawKps); // 画面座標へ変換
+     const handedness = hand.handedness || (hi===0?'Right':'Left');
+ 
+     // ★ DEBUG
+     if(hi===0){
+       const r0=rawKps[0], r8=rawKps[8], s0=kps[0], s8=kps[8];
+       const dbg=document.getElementById('debug-bar');
+       dbg.style.display='block';
+       dbg.style.background='rgba(0,100,200,0.85)';
+       dbg.textContent=
+         'RAW[0]:('+JSON.stringify(r0.x)+','+JSON.stringify(r0.y)+') '+
+         'RAW[8]:('+JSON.stringify(r8.x)+','+JSON.stringify(r8.y)+') '+
+         'SCR[0]:('+JSON.stringify(s0.x)+','+JSON.stringify(s0.y)+') '+
+         'canvas:'+canvas.width+'x'+canvas.height+' video:'+vw+'x'+vh+
+         ' score:'+JSON.stringify(hand.score)+
+         ' keys:'+Object.keys(hand.keypoints[0]).join(',')+
+         ' tfbackend:'+(typeof tf!=='undefined'?tf.getBackend():'N/A');
+     }
+ 
+     // ── Draw connections ──
+     ctx.lineCap='round';
+     CONN.forEach(([i,j,col])=>{
+       const a=kps[i],b=kps[j];
+       if(!a||!b) return;
+       ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y);
+       ctx.strokeStyle=col; ctx.lineWidth=3;
+       ctx.shadowColor=col; ctx.shadowBlur=6; ctx.stroke(); ctx.shadowBlur=0;
+     });
+     // ── Draw joints ──
+     kps.forEach((p,i)=>{
+       const col=JOINT_COL[i];
+       const r=i===0?7:i%4===0?6:4;
+       ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2);
+       ctx.fillStyle=col; ctx.shadowColor=col; ctx.shadowBlur=8; ctx.fill(); ctx.shadowBlur=0;
+       if(i%4===0&&i>0){
+         ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2);
+         ctx.strokeStyle='rgba(255,255,255,0.7)'; ctx.lineWidth=1.5; ctx.stroke();
+       }
+     });
+     // 手首付近に左右ラベル表示
+     const wristPt = kps[0];
+     ctx.font='bold 14px "Helvetica Neue",sans-serif';
+     const htxt = (handedness==='Right'?'右手':'左手');
+     const hw=ctx.measureText(htxt).width+10;
+     ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(wristPt.x-5,wristPt.y+12,hw,20);
+     ctx.fillStyle='#fff'; ctx.textBaseline='top'; ctx.fillText(htxt,wristPt.x,wristPt.y+14);
+     ctx.textBaseline='middle';
+     // ── Angles ──
+     const w=kps[0];
+     const angles={
+       // Thumb: CMC(wrist,1,2) MCP(1,2,3) IP(2,3,4)
+       t0: angle3(w,    kps[1],kps[2]),
+       t1: angle3(kps[1],kps[2],kps[3]),
+       t2: angle3(kps[2],kps[3],kps[4]),
+       // Index: MCP(wrist,5,6) PIP(5,6,7) DIP(6,7,8)
+       i0: angle3(w,    kps[5],kps[6]),
+       i1: angle3(kps[5],kps[6],kps[7]),
+       i2: angle3(kps[6],kps[7],kps[8]),
+       // Middle
+       m0: angle3(w,    kps[9], kps[10]),
+       m1: angle3(kps[9],kps[10],kps[11]),
+       m2: angle3(kps[10],kps[11],kps[12]),
+       // Ring
+       r0: angle3(w,    kps[13],kps[14]),
+       r1: angle3(kps[13],kps[14],kps[15]),
+       r2: angle3(kps[14],kps[15],kps[16]),
+       // Pinky
+       p0: angle3(w,    kps[17],kps[18]),
+       p1: angle3(kps[17],kps[18],kps[19]),
+       p2: angle3(kps[18],kps[19],kps[20]),
+     };
+     // Spread angles (between fingertips via wrist)
+     const spread={
+       ti: spreadAngle(w, kps[4],  kps[8]),
+       im: spreadAngle(w, kps[8],  kps[12]),
+       mr: spreadAngle(w, kps[12], kps[16]),
+       rp: spreadAngle(w, kps[16], kps[20]),
+     };
+     // Wrist angle (horizontal)
+     const wristAngle = lineAngle(kps[0], kps[9]); // wrist to mid-MCP
+     // Openness: avg tip distance / reference distance
+     const ref=dist(kps[0],kps[9]);
+     const tipDists=[
+       dist(kps[4],kps[0]),dist(kps[8],kps[0]),
+       dist(kps[12],kps[0]),dist(kps[16],kps[0]),dist(kps[20],kps[0])
+     ];
+     const avgTip=tipDists.reduce((a,b)=>a+b)/5;
+     const openness=ref>0?Math.min(100,Math.round((avgTip/ref)*50)):0;
+     // ── Angle labels on canvas ──
+     ctx.font='bold 11px "Helvetica Neue",sans-serif';
+     ctx.textBaseline='middle';
+     function lbl(pt,text,col){
+       if(!pt||text===null) return;
+       const x=pt.x+7,y=pt.y-8;
+       const w2=ctx.measureText(text).width+7;
+       ctx.fillStyle='rgba(0,0,0,0.65)';
+       ctx.fillRect(x-3,y-8,w2,16);
+       ctx.fillStyle=col; ctx.fillText(text,x,y);
+     }
+     // Show angle at each joint (only a selection to avoid clutter)
+     lbl(kps[2],  angles.t1!==null?angles.t1+'°':null, COL.thumb);
+     lbl(kps[3],  angles.t2!==null?angles.t2+'°':null, COL.thumb);
+     lbl(kps[6],  angles.i1!==null?angles.i1+'°':null, COL.index);
+     lbl(kps[7],  angles.i2!==null?angles.i2+'°':null, COL.index);
+     lbl(kps[10], angles.m1!==null?angles.m1+'°':null, COL.mid);
+     lbl(kps[11], angles.m2!==null?angles.m2+'°':null, COL.mid);
+     lbl(kps[14], angles.r1!==null?angles.r1+'°':null, COL.ring);
+     lbl(kps[18], angles.p1!==null?angles.p1+'°':null, COL.pinky);
+     // ── Gesture ──
+     const gesture=detectGesture(kps);
+     // ── DOM update (only for first hand) ──
+     if(hi===0){
+       document.getElementById('gesture-emoji').textContent=gesture.emoji;
+       document.getElementById('gesture-name').textContent=gesture.name;
+       function sv(id,v){ const el=document.getElementById(id); if(el) el.textContent=v!==null?v:'--'; }
+       sv('a-t0',angles.t0); sv('a-t1',angles.t1); sv('a-t2',angles.t2);
+       sv('a-i0',angles.i0); sv('a-i1',angles.i1); sv('a-i2',angles.i2);
+       sv('a-m0',angles.m0); sv('a-m1',angles.m1); sv('a-m2',angles.m2);
+       sv('a-r0',angles.r0); sv('a-r1',angles.r1); sv('a-r2',angles.r2);
+       sv('a-p0',angles.p0); sv('a-p1',angles.p1); sv('a-p2',angles.p2);
+       sv('v-open',openness);
+       sv('v-wrist',wristAngle);
+       sv('sp-ti',spread.ti); sv('sp-im',spread.im);
+       sv('sp-mr',spread.mr); sv('sp-rp',spread.rp);
+     } else {
+       // second hand
+       gWrap2.classList.add('show');
+       document.getElementById('gesture-emoji2').textContent=gesture.emoji;
+       document.getElementById('gesture-name2').textContent=gesture.name;
+     }
+   });
+   if(hands.length<2) gWrap2.classList.remove('show');
+}
+// ── Controls ──
+document.getElementById('cam-btn').addEventListener('click',async()=>{
+   facingMode=facingMode==='user'?'environment':'user';
+   if(running){ cancelAnimationFrame(animId); await startCamera(); lastTime=0; fpsArr=[]; animId=requestAnimationFrame(loop); }
+});
+document.getElementById('start-btn').addEventListener('click',()=>{
+   document.getElementById('splash').style.display='none';
+   document.getElementById('perm').classList.add('show');
+});
+document.getElementById('perm-btn').addEventListener('click',async()=>{
+   document.getElementById('perm').classList.remove('show');
+   try{
+     await startCamera(); running=true;
+     document.getElementById('status-dot').classList.remove('loading');
+     lastTime=performance.now(); animId=requestAnimationFrame(loop);
+   }catch(e){
+     document.getElementById('status-dot').classList.add('error');
+     document.querySelector('#perm p').textContent='カメラへのアクセスが拒否されました。\nSafari設定 → プライバシー → カメラ を確認してください。';
+     document.getElementById('perm').classList.add('show');
+   }
+});
+window.addEventListener('resize',resizeCanvas);
+if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+loadModel().catch(e=>{
+   window.__dlog('loadModel FATAL: '+e.message);
+   document.getElementById('splash-msg').textContent='モデルの読み込みに失敗: '+e.message;
+   document.getElementById('status-dot').classList.add('error');
+   console.error('HandPose model error:', e);
+});
+})();
 </script>
 </body>
 </html>
+ 
