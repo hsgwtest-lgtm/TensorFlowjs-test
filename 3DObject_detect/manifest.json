@@ -1,0 +1,16 @@
+{
+  "name": "3DOBJ — 物体3D検出",
+  "short_name": "3DOBJ",
+  "description": "リアルタイム物体3D姿勢推定PWAアプリ (MediaPipe Objectron 9点)",
+  "start_url": "/TensorFlowjs-test/3DObject_detect/",
+  "scope": "/TensorFlowjs-test/3DObject_detect/",
+  "id": "/TensorFlowjs-test/3DObject_detect/",
+  "display": "standalone",
+  "background_color": "#0a0a0f",
+  "theme_color": "#0a0a0f",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

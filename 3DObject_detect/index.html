@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+  <title>3DOBJ — 物体3D検出</title>
+
+  <link rel="manifest" href="manifest.json"/>
+  <meta name="theme-color" content="#0a0a0f"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black"/>
+  <meta name="apple-mobile-web-app-title" content="3DOBJ"/>
+  <link rel="apple-touch-icon" href="icon-192.png"/>
+
+  <!--
+    ── MediaPipe Objectron 直接 JS API ────────────────────────────────────
+    TF.js runtime は mobile Safari で全 keypoints が NaN になるバグがある。
+    @mediapipe/objectron WASM を直接使うことで座標が必ず有効な値として返る。
+    flipHorizontal は絶対に API に渡さない。フロントカメラ時は手動 x 反転。
+    ──────────────────────────────────────────────────────────────────────
+  -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/objectron@0.4.1640569987/objectron.js" crossorigin="anonymous"></script>
+
+  <style>
+    :root {
+      --bg:      #0a0a0f;
+      --front:   #00e5ff;
+      --back:    #4a9eff;
+      --side:    #00e676;
+      --center:  #ffb800;
+      --axis-x:  #ff6b6b;
+      --axis-y:  #00e676;
+      --axis-z:  #4a9eff;
+      --label:   #c084fc;
+      --safe-t:  env(safe-area-inset-top,0px);
+      --safe-b:  env(safe-area-inset-bottom,0px);
+    }
+    *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+    html,body{width:100%;height:100dvh;overflow:hidden;background:var(--bg);
+      font-family:'Helvetica Neue','Hiragino Sans',sans-serif;}
+
+    #video{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .5s;}
+    #video.ready {opacity:1;}
+    #video.mirror{transform:scaleX(-1);}
+    #canvas{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:5;}
+
+    /* ── Topbar ── */
+    #topbar{
+      position:fixed;top:0;left:0;right:0;z-index:20;
+      padding:calc(var(--safe-t)+6px) 14px 6px;
+      display:flex;align-items:center;gap:8px;
+      background:linear-gradient(rgba(10,10,15,.9),transparent);
+    }
+    .logo{font-size:14px;font-weight:700;letter-spacing:3px;color:#fff;}
+    .sub {font-size:10px;color:rgba(255,255,255,.4);letter-spacing:1px;margin-left:-4px;}
+    .spacer{flex:1;}
+    button.icon-btn{
+      background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);
+      color:#fff;font-size:14px;padding:4px 10px;cursor:pointer;border-radius:6px;line-height:1;
+    }
+    #dbg-btn{
+      background:rgba(255,255,255,.08);border:1px solid rgba(0,188,212,.4);
+      color:rgba(0,188,212,.8);font-size:10px;padding:4px 8px;cursor:pointer;
+      border-radius:6px;letter-spacing:1px;
+    }
+    #dbg-btn.active{background:rgba(0,188,212,.2);color:#0ff;border-color:#0ff;}
+    #fps-box{font-size:11px;color:rgba(255,255,255,.6);padding:3px 8px;
+      border:1px solid rgba(255,255,255,.15);border-radius:4px;
+      font-family:'Courier New',monospace;letter-spacing:1px;}
+    #status-dot{width:8px;height:8px;border-radius:50%;background:#00e676;
+      box-shadow:0 0 6px #00e676;animation:blink 1.5s infinite;}
+    #status-dot.loading{background:#ffb800;box-shadow:0 0 6px #ffb800;}
+    #status-dot.error  {background:#ff3a3a;box-shadow:0 0 6px #ff3a3a;animation:none;}
+    @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+    /* ── Category selector ── */
+    #cat-bar{
+      position:fixed;top:calc(var(--safe-t)+50px);left:0;right:0;z-index:20;
+      display:flex;justify-content:center;gap:8px;padding:6px 14px;
+    }
+    .cat-btn{
+      padding:5px 14px;border-radius:20px;font-size:11px;letter-spacing:1px;cursor:pointer;
+      border:1px solid rgba(255,255,255,.25);background:rgba(10,10,15,.7);
+      color:rgba(255,255,255,.6);transition:all .2s;
+    }
+    .cat-btn.active{
+      background:rgba(0,229,255,.18);border-color:var(--front);
+      color:var(--front);font-weight:700;
+    }
+
+    /* ── Debug ── */
+    #debug-panel{
+      display:none;position:fixed;bottom:115px;left:8px;right:8px;z-index:30;
+      background:rgba(0,0,0,.93);border:1px solid rgba(0,188,212,.6);border-radius:8px;
+      padding:10px 12px;font-family:'Courier New',monospace;font-size:10.5px;
+      color:#0ff;line-height:1.7;max-height:200px;overflow-y:auto;
+    }
+    #debug-panel.show{display:block;}
+    #debug-panel .dk{color:rgba(255,255,255,.4);display:inline-block;min-width:140px;}
+    #debug-panel .dv{color:#fff;}
+    #debug-panel .dh{color:#ffb800;font-weight:bold;margin-bottom:2px;}
+
+    /* ── Left: score hex ── */
+    #score-panel{position:fixed;top:calc(var(--safe-t)+100px);left:12px;z-index:20;
+      display:none;flex-direction:column;gap:8px;}
+    #score-panel.show{display:flex;}
+    .hex-badge{
+      width:78px;height:70px;
+      background:rgba(0,229,255,.14);border:1.5px solid rgba(0,229,255,.6);
+      clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);
+      display:flex;flex-direction:column;align-items:center;justify-content:center;
+    }
+    .hex-badge .hval{font-size:17px;font-weight:700;color:#fff;line-height:1;}
+    .hex-badge .hlbl{font-size:8px;color:rgba(0,229,255,.9);letter-spacing:1px;margin-top:2px;text-align:center;}
+
+    /* ── Right: info panel ── */
+    #info-panel{position:fixed;top:50%;right:10px;z-index:20;transform:translateY(-50%);
+      display:none;flex-direction:column;gap:4px;}
+    #info-panel.show{display:flex;}
+    .info-section{
+      background:rgba(10,10,15,.8);border:1px solid rgba(255,255,255,.13);
+      border-radius:7px;padding:5px 9px;font-size:10px;
+      color:rgba(255,255,255,.6);white-space:nowrap;text-align:right;
+    }
+    .info-section .sec-title{font-size:9px;color:rgba(255,255,255,.3);letter-spacing:1px;margin-bottom:3px;}
+    .info-section .row{display:flex;justify-content:space-between;gap:8px;line-height:1.65;}
+    .info-section .row .lbl{color:rgba(255,255,255,.45);}
+    .info-section .row .val{color:#fff;font-weight:700;min-width:48px;text-align:right;font-family:'Courier New',monospace;}
+    .fc{color:var(--front)!important;} .bc{color:var(--back)!important;}
+    .sc{color:var(--side)!important;}  .cc{color:var(--center)!important;}
+    .xc{color:var(--axis-x)!important;}.yc{color:var(--axis-y)!important;}
+    .zc{color:var(--axis-z)!important;}.lc{color:var(--label)!important;}
+
+    /* ── Bottom ── */
+    #bottom{position:fixed;bottom:0;left:0;right:0;z-index:20;
+      padding:8px 14px calc(var(--safe-b)+10px);
+      background:linear-gradient(transparent,rgba(10,10,15,.9));
+      display:none;flex-direction:column;gap:3px;}
+    #bottom.show{display:flex;}
+    .brow{font-size:11px;color:rgba(255,255,255,.5);letter-spacing:1px;text-align:center;}
+    .brow span{font-weight:700;color:#fff;}
+    .legend-row{display:flex;justify-content:center;gap:10px;margin-top:2px;flex-wrap:wrap;}
+    .leg-item{font-size:9px;display:flex;align-items:center;gap:3px;color:rgba(255,255,255,.5);}
+    .leg-dot{width:7px;height:7px;border-radius:50%;}
+
+    /* ── Crosshair ── */
+    #crosshair{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+      pointer-events:none;z-index:6;}
+    .ch-h{position:absolute;top:50%;left:-14px;right:-14px;height:1.5px;
+      transform:translateY(-50%);background:rgba(255,255,255,.3);}
+    .ch-v{position:absolute;left:50%;top:-14px;bottom:-14px;width:1.5px;
+      transform:translateX(-50%);background:rgba(255,255,255,.3);}
+
+    /* ── Splash ── */
+    #splash{position:fixed;inset:0;z-index:100;background:var(--bg);
+      display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:40px;}
+    #splash h1{font-size:26px;letter-spacing:6px;color:#fff;font-weight:300;}
+    #splash p {font-size:12px;letter-spacing:2px;color:rgba(255,255,255,.4);text-align:center;line-height:1.8;}
+    #prog-wrap{width:200px;height:2px;background:rgba(255,255,255,.1);}
+    #prog-bar {height:100%;width:0%;background:#00e5ff;transition:width .3s;}
+    #splash-msg{font-size:11px;color:rgba(255,255,255,.45);letter-spacing:2px;}
+    #start-btn{display:none;padding:12px 36px;border:1px solid rgba(255,255,255,.3);
+      background:rgba(255,255,255,.06);color:#fff;font-size:13px;letter-spacing:4px;
+      cursor:pointer;border-radius:4px;font-family:inherit;}
+    #start-btn.show{display:block;}
+    .obj-icon{font-size:48px;filter:drop-shadow(0 0 16px rgba(0,229,255,.5));}
+
+    /* ── Perm ── */
+    #perm{display:none;position:fixed;inset:0;z-index:101;background:var(--bg);
+      flex-direction:column;align-items:center;justify-content:center;gap:22px;
+      padding:40px;text-align:center;}
+    #perm.show{display:flex;}
+    #perm .icon{font-size:50px;}
+    #perm p{font-size:13px;color:rgba(255,255,255,.6);line-height:1.8;}
+    #perm-btn{padding:13px 38px;border:1px solid rgba(255,255,255,.3);
+      background:rgba(255,255,255,.08);color:#fff;font-family:inherit;
+      font-size:13px;letter-spacing:3px;cursor:pointer;border-radius:4px;}
+
+    /* ── Loading overlay (model switch) ── */
+    #switching{display:none;position:fixed;inset:0;z-index:50;
+      align-items:center;justify-content:center;flex-direction:column;gap:12px;
+      background:rgba(10,10,15,.75);}
+    #switching.show{display:flex;}
+    #switching p{font-size:13px;color:rgba(255,255,255,.7);letter-spacing:3px;}
+    .spin{width:32px;height:32px;border:3px solid rgba(0,229,255,.2);
+      border-top-color:var(--front);border-radius:50%;animation:spin .8s linear infinite;}
+    @keyframes spin{to{transform:rotate(360deg)}}
+  </style>
+</head>
+<body>
+
+<video id="video" autoplay playsinline muted webkit-playsinline></video>
+<canvas id="canvas"></canvas>
+<div id="crosshair"><div class="ch-h"></div><div class="ch-v"></div></div>
+
+<div id="topbar">
+  <div class="logo">3DOBJ</div><div class="sub">物体検出</div>
+  <div class="spacer"></div>
+  <button id="dbg-btn">DBG</button>
+  <button id="cam-btn" class="icon-btn">⟳</button>
+  <div id="fps-box">-- FPS</div>
+  <div id="status-dot" class="loading"></div>
+</div>
+
+<!-- Category selector -->
+<div id="cat-bar">
+  <button class="cat-btn active" data-cat="Cup">☕ カップ</button>
+  <button class="cat-btn" data-cat="Chair">🪑 椅子</button>
+  <button class="cat-btn" data-cat="Camera">📷 カメラ</button>
+  <button class="cat-btn" data-cat="Shoe">👟 靴</button>
+</div>
+
+<div id="debug-panel"></div>
+<div id="switching"><div class="spin"></div><p id="switching-msg">モデル切替中…</p></div>
+
+<!-- Left badges -->
+<div id="score-panel">
+  <div class="hex-badge">
+    <div class="hval" id="conf-val">--</div>
+    <div class="hlbl">信頼度%</div>
+  </div>
+  <div class="hex-badge">
+    <div class="hval" id="dist-val">--</div>
+    <div class="hlbl">距離推定</div>
+  </div>
+</div>
+
+<!-- Right info -->
+<div id="info-panel">
+  <div class="info-section">
+    <div class="sec-title">3D バウンディングボックス</div>
+    <div class="row"><span class="lbl fc">幅 (W)</span>   <span class="val" id="v-w">--</span></div>
+    <div class="row"><span class="lbl sc">高さ (H)</span> <span class="val" id="v-h">--</span></div>
+    <div class="row"><span class="lbl bc">奥行 (D)</span> <span class="val" id="v-d">--</span></div>
+    <div class="row"><span class="lbl cc">中心 X</span>   <span class="val" id="v-cx">--</span></div>
+    <div class="row"><span class="lbl cc">中心 Y</span>   <span class="val" id="v-cy">--</span></div>
+  </div>
+  <div class="info-section">
+    <div class="sec-title">姿勢・向き</div>
+    <div class="row"><span class="lbl xc">X 軸回転</span><span class="val" id="v-rx">--°</span></div>
+    <div class="row"><span class="lbl yc">Y 軸回転</span><span class="val" id="v-ry">--°</span></div>
+    <div class="row"><span class="lbl zc">Z 軸回転</span><span class="val" id="v-rz">--°</span></div>
+  </div>
+  <div class="info-section">
+    <div class="sec-title">フレーム内位置</div>
+    <div class="row"><span class="lbl">上端</span>  <span class="val" id="v-top">--%</span></div>
+    <div class="row"><span class="lbl">左端</span>  <span class="val" id="v-left">--%</span></div>
+    <div class="row"><span class="lbl">検出数</span><span class="val" id="v-count">--</span></div>
+  </div>
+</div>
+
+<!-- Bottom -->
+<div id="bottom">
+  <div class="brow" id="obj-info">物体をカメラに向けてください 📦</div>
+  <div class="brow">カテゴリ <span id="v-cat">Cup</span> &nbsp;|&nbsp; 可視頂点 <span id="v-vis">--/8</span> &nbsp;|&nbsp; 投影面積 <span id="v-area">--%</span></div>
+  <div class="legend-row">
+    <div class="leg-item"><div class="leg-dot" style="background:var(--front)"></div>前面</div>
+    <div class="leg-item"><div class="leg-dot" style="background:var(--back)"></div>背面</div>
+    <div class="leg-item"><div class="leg-dot" style="background:var(--side)"></div>側辺</div>
+    <div class="leg-item"><div class="leg-dot" style="background:var(--center)"></div>中心</div>
+    <div class="leg-item"><div class="leg-dot" style="background:var(--axis-x)"></div>X軸</div>
+    <div class="leg-item"><div class="leg-dot" style="background:var(--axis-y)"></div>Y軸</div>
+    <div class="leg-item"><div class="leg-dot" style="background:var(--axis-z)"></div>Z軸</div>
+  </div>
+</div>
+
+<!-- Splash -->
+<div id="splash">
+  <div class="obj-icon">📦</div>
+  <h1>3DOBJ</h1>
+  <p>物体3D検出 · 9点 · リアルタイム<br>MediaPipe Objectron</p>
+  <div id="prog-wrap"><div id="prog-bar"></div></div>
+  <div id="splash-msg">モデルを読み込み中…</div>
+  <button id="start-btn">▶ カメラ起動</button>
+</div>
+
+<div id="perm">
+  <div class="icon">📷</div>
+  <p>カメラへのアクセスが必要です<br>次の画面で「許可」を選択してください</p>
+  <button id="perm-btn">アクセスを許可</button>
+</div>
+
+<script>
+(function(){
+  /*
+   * ── MediaPipe Objectron 9 keypoints ────────────────────────────────────
+   *  0: centroid (3D box center)
+   *  1: back-bottom-left   (-x,-y,-z)
+   *  2: front-bottom-left  (-x,-y,+z)
+   *  3: front-bottom-right (+x,-y,+z)
+   *  4: back-bottom-right  (+x,-y,-z)
+   *  5: back-top-left      (-x,+y,-z)
+   *  6: front-top-left     (-x,+y,+z)
+   *  7: front-top-right    (+x,+y,+z)
+   *  8: back-top-right     (+x,+y,-z)
+   *
+   * Coordinates: normalized [0,1], x=right, y=down, z=depth
+   * ────────────────────────────────────────────────────────────────────────
+   */
+
+  // Box edges: [fromIdx, toIdx, 'front'|'back'|'side']
+  const BOX_EDGES = [
+    // Bottom face
+    [1,2,'side'], [2,3,'front'], [3,4,'side'], [4,1,'back'],
+    // Top face
+    [5,6,'side'], [6,7,'front'], [7,8,'side'], [8,5,'back'],
+    // Verticals
+    [1,5,'back'], [2,6,'front'], [3,7,'front'], [4,8,'back'],
+  ];
+
+  const EDGE_COL = { front:'#00e5ff', back:'#4a9eff', side:'#00e676' };
+  const EDGE_LW  = { front:3.5, back:2.0, side:2.5 };
+  const EDGE_BLUR= { front:6, back:2, side:3 };
+
+  // Colors
+  const C = {
+    center:'#ffb800', label:'#c084fc',
+    axisX:'#ff6b6b', axisY:'#00e676', axisZ:'#4a9eff',
+  };
+
+  // ── Math helpers ──
+  function valid(p){ return p!=null&&typeof p.x==='number'&&!isNaN(p.x); }
+  function dist2d(a,b){ return Math.sqrt((a.x-b.x)**2+(a.y-b.y)**2); }
+
+  // Average z of a set of keypoints (depth sorting for back/front determination)
+  function avgZ(kps, indices){
+    let s=0,n=0;
+    indices.forEach(i=>{ if(kps[i]&&!isNaN(kps[i].z)){s+=kps[i].z;n++;} });
+    return n?s/n:0;
+  }
+
+  // Estimate rotation angles from 3D box corners
+  // Yaw: rotation around Y axis (horizontal turn)
+  // Pitch: rotation around X axis (tilt forward/back)
+  // Roll: rotation around Z axis (lean left/right)
+  function estimateRotation(kps){
+    // Use top-face normal from cross product of two edges
+    const p5=kps[5],p6=kps[6],p8=kps[8];
+    if(!valid(p5)||!valid(p6)||!valid(p8)) return {rx:null,ry:null,rz:null};
+
+    // Edge vectors in 3D
+    const e1={x:p6.x-p5.x, y:p6.y-p5.y, z:(p6.z||0)-(p5.z||0)};
+    const e2={x:p8.x-p5.x, y:p8.y-p5.y, z:(p8.z||0)-(p5.z||0)};
+
+    // Normal (cross product)
+    const nx=e1.y*e2.z-e1.z*e2.y;
+    const ny=e1.z*e2.x-e1.x*e2.z;
+    const nz=e1.x*e2.y-e1.y*e2.x;
+    const nl=Math.sqrt(nx*nx+ny*ny+nz*nz);
+    if(nl<1e-8) return {rx:null,ry:null,rz:null};
+
+    const nnx=nx/nl, nny=ny/nl, nnz=nz/nl;
+    const rx=Math.round(Math.atan2(nny,nnz)*180/Math.PI);
+    const ry=Math.round(Math.atan2(nnx,nnz)*180/Math.PI);
+
+    // Roll: angle of front-top-edge relative to horizontal
+    const p7=kps[7];
+    if(!valid(p7)) return {rx,ry,rz:null};
+    const rz=Math.round(Math.atan2(p7.y-p6.y, p7.x-p6.x)*180/Math.PI);
+    return {rx,ry,rz};
+  }
+
+  // Project area of bounding box in % of frame
+  function projectedArea(kps, vw, vh){
+    const xs=kps.filter(p=>valid(p)).map(p=>p.x*vw);
+    const ys=kps.filter(p=>valid(p)).map(p=>p.y*vh);
+    if(!xs.length) return null;
+    const w=Math.max(...xs)-Math.min(...xs);
+    const h=Math.max(...ys)-Math.min(...ys);
+    return Math.round(w*h/(vw*vh)*100);
+  }
+
+  // Distance estimate: larger apparent size = closer
+  function estimateDist(kps, vw){
+    const diag=dist2d(
+      {x:kps[2]?kps[2].x*vw:0, y:kps[2]?kps[2].y*vw:0},
+      {x:kps[8]?kps[8].x*vw:0, y:kps[8]?kps[8].y*vw:0}
+    );
+    if(!diag) return null;
+    // Rough heuristic: normalize to 0-99
+    const raw=Math.round(Math.min(99, Math.max(1, 300/diag*10)));
+    return raw;
+  }
+
+  // ── State ──
+  let objectron=null, stream=null, animId=null, running=false;
+  let facingMode='environment', lastTime=0, fpsArr=[];
+  let currentCat='Cup', switching=false, debugMode=false;
+  let lastResults=null;
+
+  const video  = document.getElementById('video');
+  const canvas = document.getElementById('canvas');
+  const ctx    = canvas.getContext('2d');
+  const dbgEl  = document.getElementById('debug-panel');
+
+  // ── Debug ──
+  document.getElementById('dbg-btn').addEventListener('click',()=>{
+    debugMode=!debugMode;
+    dbgEl.classList.toggle('show',debugMode);
+    document.getElementById('dbg-btn').classList.toggle('active',debugMode);
+  });
+
+  function updateDebug(detections, vw, vh){
+    if(!debugMode) return;
+    let html=`<div class="dh">─── DEBUG (MediaPipe Objectron) ───</div>`;
+    html+=`<div><span class="dk">video size</span><span class="dv">${vw}×${vh}</span></div>`;
+    html+=`<div><span class="dk">facingMode</span><span class="dv">${facingMode}</span></div>`;
+    html+=`<div><span class="dk">category</span><span class="dv">${currentCat}</span></div>`;
+    html+=`<div><span class="dk">detections</span><span class="dv">${detections.length}</span></div>`;
+    if(detections.length){
+      const kps=detections[0].keypoints||[];
+      const p0=kps[0]||{};
+      html+=`<div><span class="dk">keypoints.len</span><span class="dv">${kps.length}</span></div>`;
+      html+=`<div><span class="dk">kp[0] center</span><span class="dv">x:${p0.x?.toFixed(4)||'?'} y:${p0.y?.toFixed(4)||'?'} z:${p0.z?.toFixed(4)||'?'}</span></div>`;
+      const nan=isNaN(p0.x);
+      html+=`<div><span class="dk">coords valid?</span><span class="dv" style="color:${nan?'#f66':'#0f6'}">${nan?'NaN — BROKEN':'OK ✓'}</span></div>`;
+      if(detections[0].score!==undefined)
+        html+=`<div><span class="dk">score</span><span class="dv">${detections[0].score?.toFixed(3)}</span></div>`;
+    }
+    dbgEl.innerHTML=html;
+  }
+
+  // ── Build / rebuild Objectron instance ──
+  function buildObjectron(cat){
+    return new Promise((resolve, reject)=>{
+      try{
+        const obj = new Objectron({
+          locateFile: (file)=>
+            `https://cdn.jsdelivr.net/npm/@mediapipe/objectron@0.4.1640569987/${file}`
+        });
+        obj.setOptions({
+          modelName: cat,
+          maxNumObjects: 3,
+          minDetectionConfidence: 0.5,
+          minTrackingConfidence: 0.99,
+        });
+        obj.onResults((results)=>{ lastResults=results; });
+        // Initialize by sending a blank frame probe — resolved when first onResults fires
+        obj.initialize().then(()=>resolve(obj)).catch(reject);
+      }catch(e){ reject(e); }
+    });
+  }
+
+  // ── Load model ──
+  async function loadModel(){
+    const bar=document.getElementById('prog-bar');
+    const msg=document.getElementById('splash-msg');
+    bar.style.width='20%'; msg.textContent='MediaPipe Objectron 初期化中…';
+    try{
+      objectron = await buildObjectron(currentCat);
+      bar.style.width='90%'; msg.textContent=`準備完了 — ${currentCat} モデル`;
+    }catch(e){
+      console.error('Objectron init failed:', e);
+      bar.style.width='90%';
+      msg.textContent='初期化完了 (カメラ起動後に完全ロード)';
+      // Build without initialize() — will load on first send
+      try{
+        objectron = new Objectron({
+          locateFile:(file)=>
+            `https://cdn.jsdelivr.net/npm/@mediapipe/objectron@0.4.1640569987/${file}`
+        });
+        objectron.setOptions({
+          modelName:currentCat, maxNumObjects:3,
+          minDetectionConfidence:0.5, minTrackingConfidence:0.99
+        });
+        objectron.onResults((r)=>{ lastResults=r; });
+      }catch(e2){ throw e2; }
+    }
+    await new Promise(r=>setTimeout(r,300));
+    bar.style.width='100%';
+    await new Promise(r=>setTimeout(r,150));
+    document.getElementById('start-btn').classList.add('show');
+    msg.textContent='タップして開始';
+  }
+
+  // ── Switch category ──
+  async function switchCategory(cat){
+    if(cat===currentCat||switching) return;
+    switching=true;
+    document.getElementById('switching-msg').textContent=`${cat} モデルに切替中…`;
+    document.getElementById('switching').classList.add('show');
+    cancelAnimationFrame(animId);
+    try{
+      if(objectron){ try{objectron.close();}catch(e){} }
+      currentCat=cat;
+      document.getElementById('v-cat').textContent=cat;
+      objectron = new Objectron({
+        locateFile:(file)=>
+          `https://cdn.jsdelivr.net/npm/@mediapipe/objectron@0.4.1640569987/${file}`
+      });
+      objectron.setOptions({
+        modelName:cat, maxNumObjects:3,
+        minDetectionConfidence:0.5, minTrackingConfidence:0.99
+      });
+      objectron.onResults((r)=>{ lastResults=r; });
+      // Update UI
+      document.querySelectorAll('.cat-btn').forEach(b=>{
+        b.classList.toggle('active', b.dataset.cat===cat);
+      });
+    }catch(e){ console.warn('switch error:', e); }
+    finally{
+      switching=false;
+      document.getElementById('switching').classList.remove('show');
+      if(running){ lastTime=0; fpsArr=[]; animId=requestAnimationFrame(loop); }
+    }
+  }
+
+  // ── Camera ──
+  async function startCamera(){
+    if(stream) stream.getTracks().forEach(t=>t.stop());
+    stream = await navigator.mediaDevices.getUserMedia({
+      video:{ facingMode:{ideal:facingMode}, width:{ideal:1280}, height:{ideal:720} },
+      audio:false
+    });
+    video.srcObject=stream;
+    await new Promise(r=>{ video.onloadedmetadata=r; });
+    // Safari readyState fix
+    await new Promise(r=>{
+      if(video.readyState>=2){ r(); return; }
+      video.oncanplay=r;
+    });
+    video.play();
+    resizeCanvas();
+    video.classList.add('ready');
+    video.classList.toggle('mirror', facingMode==='user');
+  }
+
+  function resizeCanvas(){
+    canvas.width  = video.videoWidth  || window.innerWidth;
+    canvas.height = video.videoHeight || window.innerHeight;
+  }
+
+  // ── Main loop ──
+  async function loop(){
+    if(!running||switching) return;
+    const now=performance.now(), dt=now-lastTime; lastTime=now;
+    if(dt>0){
+      fpsArr.push(1000/dt); if(fpsArr.length>8) fpsArr.shift();
+      document.getElementById('fps-box').textContent=
+        Math.round(fpsArr.reduce((a,b)=>a+b)/fpsArr.length)+' FPS';
+    }
+    try{
+      // !! flipHorizontal は渡さない — NaN バグ回避 !!
+      await objectron.send({image: video});
+    }catch(e){ console.warn(e); }
+    // lastResults is set by onResults callback
+    const detections = extractDetections(lastResults);
+    draw(detections);
+    animId=requestAnimationFrame(loop);
+  }
+
+  // Normalize results structure across possible API variations
+  function extractDetections(results){
+    if(!results) return [];
+    // Try known result field names
+    const arr =
+      results.objectDetections ||
+      results.detectedObjects   ||
+      results.multipleObjectDetections ||
+      [];
+    return Array.isArray(arr) ? arr : [];
+  }
+
+  // ── Scale normalized [0,1] coords to canvas pixels ──
+  function scaleKps(kps, cw, ch, doMirror){
+    return kps.map(p=>{
+      if(!p) return p;
+      let x = p.x, y = p.y;
+      // If already pixel-range (max > 2), keep
+      const isNorm = kps.every(q=>!q||Math.abs(q.x)<=1.5);
+      if(isNorm){ x*=cw; y*=ch; }
+      if(doMirror) x=cw-x;
+      return {...p, x, y};
+    });
+  }
+
+  // ── Draw ──
+  function draw(detections){
+    const vw=video.videoWidth, vh=video.videoHeight;
+    if(!vw||!vh) return;
+    if(canvas.width!==vw||canvas.height!==vh) resizeCanvas();
+    ctx.clearRect(0,0,vw,vh);
+
+    updateDebug(detections,vw,vh);
+
+    const scoreEl=document.getElementById('score-panel');
+    const infoEl =document.getElementById('info-panel');
+    const botEl  =document.getElementById('bottom');
+
+    if(!detections||!detections.length){
+      scoreEl.classList.remove('show'); infoEl.classList.remove('show'); botEl.classList.remove('show');
+      document.getElementById('obj-info').textContent='物体をカメラに向けてください 📦';
+      document.getElementById('v-count').textContent='0';
+      return;
+    }
+    scoreEl.classList.add('show'); infoEl.classList.add('show'); botEl.classList.add('show');
+
+    const needMirror=(facingMode==='user');
+
+    detections.forEach((det, di)=>{
+      const rawKps = det.keypoints || det.landmarks || [];
+      if(!rawKps.length) return;
+
+      const kps = scaleKps(rawKps, vw, vh, needMirror);
+
+      // ── Draw box edges ──
+      ctx.lineCap='round'; ctx.lineJoin='round';
+
+      // Determine actual front/back by z depth of centroids
+      // front group (2,3,6,7) vs back group (1,4,5,8)
+      const zFront = avgZ(rawKps,[2,3,6,7]);
+      const zBack  = avgZ(rawKps,[1,4,5,8]);
+      // In MediaPipe, larger z = closer to camera (positive = front)
+      // If front group has larger z → they ARE the front face
+      const frontIsClose = zFront >= zBack;
+
+      BOX_EDGES.forEach(([i,j,type])=>{
+        const a=kps[i], b=kps[j];
+        if(!valid(a)||!valid(b)) return;
+        // Re-classify based on actual z if front group is inverted
+        let t = type;
+        if(!frontIsClose){
+          if(t==='front') t='back';
+          else if(t==='back') t='front';
+        }
+        const col=EDGE_COL[t], lw=EDGE_LW[t], blur=EDGE_BLUR[t];
+        ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y);
+        ctx.strokeStyle=col; ctx.lineWidth=lw;
+        ctx.shadowColor=col; ctx.shadowBlur=blur; ctx.stroke(); ctx.shadowBlur=0;
+      });
+
+      // ── Corner dots ──
+      for(let i=1;i<=8;i++){
+        const p=kps[i]; if(!valid(p)) continue;
+        const isFront=[2,3,6,7].includes(i);
+        const col = (isFront===frontIsClose) ? EDGE_COL.front : EDGE_COL.back;
+        const r = isFront ? 5 : 3.5;
+        ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2);
+        ctx.fillStyle=col; ctx.shadowColor=col; ctx.shadowBlur=8; ctx.fill(); ctx.shadowBlur=0;
+        ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2);
+        ctx.strokeStyle='rgba(255,255,255,.5)'; ctx.lineWidth=1.2; ctx.stroke();
+      }
+
+      // ── Center dot ──
+      const cp=kps[0];
+      if(valid(cp)){
+        ctx.beginPath(); ctx.arc(cp.x,cp.y,7,0,Math.PI*2);
+        ctx.fillStyle=C.center; ctx.shadowColor=C.center; ctx.shadowBlur=12; ctx.fill(); ctx.shadowBlur=0;
+        ctx.beginPath(); ctx.arc(cp.x,cp.y,7,0,Math.PI*2);
+        ctx.strokeStyle='rgba(255,255,255,.6)'; ctx.lineWidth=1.5; ctx.stroke();
+      }
+
+      // ── 3D Axis indicator at center ──
+      if(valid(cp) && kps[3] && kps[6] && kps[8]){
+        const axLen=40;
+        // X axis: direction from kp[1] to kp[4] (bottom-left to bottom-right = width direction)
+        const p1=kps[1],p4=kps[4];
+        if(valid(p1)&&valid(p4)){
+          const dx=p4.x-p1.x, dy=p4.y-p1.y;
+          const l=Math.sqrt(dx*dx+dy*dy)||1;
+          const ax=cp.x+dx/l*axLen, ay=cp.y+dy/l*axLen;
+          drawArrow(cp.x,cp.y,ax,ay,C.axisX,'X');
+        }
+        // Y axis: direction from kp[2] to kp[6] (bottom-front to top-front = height direction)
+        const p2=kps[2],p6=kps[6];
+        if(valid(p2)&&valid(p6)){
+          const dx=p6.x-p2.x, dy=p6.y-p2.y;
+          const l=Math.sqrt(dx*dx+dy*dy)||1;
+          const ax=cp.x+dx/l*axLen, ay=cp.y+dy/l*axLen;
+          drawArrow(cp.x,cp.y,ax,ay,C.axisY,'Y');
+        }
+        // Z axis: direction from kp[2] to kp[1] (front to back = depth direction)
+        if(valid(p1)&&valid(p2)){
+          const dx=p1.x-p2.x, dy=p1.y-p2.y;
+          const l=Math.sqrt(dx*dx+dy*dy)||1;
+          const ax=cp.x+dx/l*axLen*0.7, ay=cp.y+dy/l*axLen*0.7;
+          drawArrow(cp.x,cp.y,ax,ay,C.axisZ,'Z');
+        }
+      }
+
+      // ── Object label & confidence ──
+      const conf = det.score!==undefined ? Math.round(det.score*100) :
+                   det.confidence!==undefined ? Math.round(det.confidence*100) : null;
+      const catNames = {Cup:'カップ', Chair:'椅子', Camera:'カメラ', Shoe:'靴'};
+      const labelText = (catNames[currentCat]||currentCat) + (conf!==null?` ${conf}%`:'');
+
+      if(valid(cp)){
+        ctx.font=`bold 13px "Helvetica Neue",sans-serif`;
+        ctx.textBaseline='middle';
+        const lw2=ctx.measureText(labelText).width+12;
+        ctx.fillStyle='rgba(0,0,0,.7)'; ctx.fillRect(cp.x-lw2/2,cp.y-28,lw2,20);
+        ctx.fillStyle=C.label; ctx.textAlign='center';
+        ctx.fillText(labelText,cp.x,cp.y-18);
+        ctx.textAlign='left';
+      }
+
+      // ── DOM update (first object) ──
+      if(di===0){
+        if(conf!==null) document.getElementById('conf-val').textContent=conf;
+
+        // 3D dimensions from keypoint distances
+        const w3=kps[1]&&kps[4] ? Math.round(dist2d(kps[1],kps[4])) : null;
+        const h3=kps[1]&&kps[5] ? Math.round(dist2d(kps[1],kps[5])) : null;
+        const d3=kps[1]&&kps[2] ? Math.round(dist2d(kps[1],kps[2])) : null;
+
+        function sv(id,v,suf=''){
+          document.getElementById(id).textContent= v!==null ? v+suf : '--'+(suf||'');
+        }
+        sv('v-w', w3, 'px'); sv('v-h', h3, 'px'); sv('v-d', d3, 'px');
+
+        if(valid(cp)){
+          sv('v-cx', Math.round(cp.x/vw*100), '%');
+          sv('v-cy', Math.round(cp.y/vh*100), '%');
+        }
+
+        const rot = estimateRotation(rawKps);
+        sv('v-rx', rot.rx, '°'); sv('v-ry', rot.ry, '°'); sv('v-rz', rot.rz, '°');
+
+        const bbox=det.boundingBox;
+        if(bbox){
+          sv('v-top',  Math.round((bbox.yCenter-bbox.height/2)*100), '%');
+          sv('v-left', Math.round((bbox.xCenter-bbox.width /2)*100), '%');
+        }
+
+        const distEst = estimateDist(kps, vw);
+        sv('dist-val', distEst);
+
+        const visCount = kps.filter((p,i)=>i>=1&&valid(p)).length;
+        sv('v-vis', visCount, '/8');
+
+        const area = projectedArea(kps, vw, vh);
+        sv('v-area', area, '%');
+      }
+    });
+
+    document.getElementById('v-count').textContent=detections.length;
+    document.getElementById('obj-info').textContent=
+      `${detections.length}個の物体を検出中 (${currentCat})`;
+  }
+
+  // Arrow drawing helper
+  function drawArrow(x1,y1,x2,y2,col,label){
+    const dx=x2-x1, dy=y2-y1;
+    const l=Math.sqrt(dx*dx+dy*dy)||1;
+    ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2);
+    ctx.strokeStyle=col; ctx.lineWidth=2;
+    ctx.shadowColor=col; ctx.shadowBlur=4; ctx.stroke(); ctx.shadowBlur=0;
+    // arrowhead
+    const hs=7;
+    const angle=Math.atan2(dy,dx);
+    ctx.beginPath();
+    ctx.moveTo(x2,y2);
+    ctx.lineTo(x2-hs*Math.cos(angle-0.4), y2-hs*Math.sin(angle-0.4));
+    ctx.lineTo(x2-hs*Math.cos(angle+0.4), y2-hs*Math.sin(angle+0.4));
+    ctx.closePath();
+    ctx.fillStyle=col; ctx.fill();
+    // label
+    ctx.font='bold 9px "Helvetica Neue",sans-serif';
+    ctx.textBaseline='middle'; ctx.textAlign='center';
+    ctx.fillStyle=col;
+    ctx.fillText(label, x2+dx/l*8, y2+dy/l*8);
+    ctx.textAlign='left';
+  }
+
+  // ── Controls ──
+  // Category buttons
+  document.querySelectorAll('.cat-btn').forEach(btn=>{
+    btn.addEventListener('click',()=> switchCategory(btn.dataset.cat));
+  });
+
+  document.getElementById('cam-btn').addEventListener('click',async()=>{
+    facingMode=facingMode==='environment'?'user':'environment';
+    if(running){
+      cancelAnimationFrame(animId);
+      await startCamera();
+      lastTime=0; fpsArr=[];
+      animId=requestAnimationFrame(loop);
+    }
+  });
+
+  document.getElementById('start-btn').addEventListener('click',()=>{
+    document.getElementById('splash').style.display='none';
+    document.getElementById('perm').classList.add('show');
+  });
+
+  document.getElementById('perm-btn').addEventListener('click',async()=>{
+    document.getElementById('perm').classList.remove('show');
+    try{
+      await startCamera(); running=true;
+      document.getElementById('status-dot').classList.remove('loading');
+      document.getElementById('v-cat').textContent=currentCat;
+      lastTime=performance.now(); animId=requestAnimationFrame(loop);
+    }catch(e){
+      document.getElementById('status-dot').classList.add('error');
+      document.querySelector('#perm p').textContent=
+        'カメラへのアクセスが拒否されました。\nSafari設定→プライバシー→カメラ を確認してください。';
+      document.getElementById('perm').classList.add('show');
+    }
+  });
+
+  window.addEventListener('resize',resizeCanvas);
+  if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+
+  loadModel().catch(e=>{
+    document.getElementById('splash-msg').textContent='読み込み失敗: '+e.message;
+    document.getElementById('status-dot').classList.add('error');
+    console.error(e);
+  });
+})();
+</script>
+</body>
+</html>
