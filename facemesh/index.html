@@ -60,10 +60,6 @@
     .spacer{flex:1;}
     #cam-btn{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);
       color:#fff;font-size:16px;padding:4px 10px;cursor:pointer;border-radius:6px;line-height:1;}
-    #mesh-btn{background:rgba(255,255,255,.08);border:1px solid rgba(74,158,255,.4);
-      color:rgba(74,158,255,.8);font-size:10px;padding:4px 8px;cursor:pointer;
-      border-radius:6px;letter-spacing:1px;}
-    #mesh-btn.active{background:rgba(74,158,255,.2);color:#4af;border-color:#4af;}
     #dbg-btn{background:rgba(255,255,255,.08);border:1px solid rgba(0,188,212,.4);
       color:rgba(0,188,212,.8);font-size:10px;padding:4px 8px;cursor:pointer;
       border-radius:6px;letter-spacing:1px;}
@@ -176,7 +172,6 @@
 <div id="topbar">
   <div class="logo">FACE</div><div class="sub">顔メッシュ</div>
   <div class="spacer"></div>
-  <button id="mesh-btn">MESH</button>
   <button id="dbg-btn">DBG</button>
   <button id="cam-btn">⟳</button>
   <div id="fps-box">-- FPS</div>
@@ -413,17 +408,13 @@
   // ── State ──
   let detector=null, stream=null, animId=null, running=false;
   let facingMode='user', lastTime=0, fpsArr=[];
-  let showMesh=false, debugMode=false;
+  let debugMode=false;
 
   const video  = document.getElementById('video');
   const canvas = document.getElementById('canvas');
   const ctx    = canvas.getContext('2d');
   const dbgEl  = document.getElementById('debug-panel');
 
-  document.getElementById('mesh-btn').addEventListener('click',()=>{
-    showMesh=!showMesh;
-    document.getElementById('mesh-btn').classList.toggle('active',showMesh);
-  });
   document.getElementById('dbg-btn').addEventListener('click',()=>{
     debugMode=!debugMode;
     dbgEl.classList.toggle('show',debugMode);
@@ -583,13 +574,6 @@
       }
 
       ctx.lineCap='round'; ctx.lineJoin='round';
-
-      // ── メッシュ (オプション) ──
-      if(showMesh){
-        ctx.globalAlpha=0.5;
-        drawLines(MESH_LINES, C.mesh, 0.8);
-        ctx.globalAlpha=1;
-      }
 
       // ── 顔輪郭 ──
       drawPolyline(OVAL, C.oval, 2, true);
