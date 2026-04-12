@@ -588,7 +588,7 @@
         lastDebugExtra.zFront=zFront;
         lastDebugExtra.zBack=zBack;
         lastDebugExtra.projNaN=pts.some(p=>p&&(isNaN(p.x)||isNaN(p.y)));
-        console.log('[3DOBJ] zFront='+zFront.toFixed(4)+' zBack='+zBack.toFixed(4));
+        if(debugMode) console.log('[3DOBJ] zFront='+zFront.toFixed(4)+' zBack='+zBack.toFixed(4));
       }
       const frontClose=zFront<=zBack; // smaller z = closer in camera space
 
@@ -640,7 +640,7 @@
       const conf = det.score != null ? Math.round(det.score * 100)
                  : det.confidence != null ? Math.round(det.confidence * 100)
                  : null;
-      console.log('[3DOBJ] det['+di+'] conf='+conf+' score='+det.score+' confidence='+det.confidence);
+      if(debugMode) console.log('[3DOBJ] det['+di+'] conf='+conf+' score='+det.score+' confidence='+det.confidence);
       const ja={Cup:'カップ',Chair:'椅子',Camera:'カメラ',Shoe:'靴'};
       const lbl=(ja[currentCat]||currentCat)+(conf!=null?` ${conf}%`:'');
       if(cp&&cp.x!=null&&!isNaN(cp.x)){
@@ -667,7 +667,7 @@
         const euler=matToEuler(R);
         sv('v-pitch',euler.pitch,'°');sv('v-yaw',euler.yaw,'°');sv('v-roll',euler.roll,'°');
         sv('v-area',projArea(pts,vw,vh),'%');
-        console.log('[3DOBJ] T=',T,'S=',S,'euler=',euler);
+        if(debugMode) console.log('[3DOBJ] T=',T,'S=',S,'euler=',euler);
       }
     });
 
