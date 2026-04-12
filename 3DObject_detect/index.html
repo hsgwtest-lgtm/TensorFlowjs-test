@@ -170,7 +170,7 @@
   <div id="topbar">
     <div class="logo">3DOBJ</div>
     <div class="sub">物体検出</div>
-    <div style="font-size:10px;color:#0ff;background:rgba(0,229,255,.15);border:1px solid rgba(0,229,255,.4);border-radius:4px;padding:2px 6px;font-weight:700;flex-shrink:0;">4</div>
+    <div style="font-size:10px;color:#0ff;background:rgba(0,229,255,.15);border:1px solid rgba(0,229,255,.4);border-radius:4px;padding:2px 6px;font-weight:700;flex-shrink:0;">5</div>
     <div class="sp"></div>
     <button id="dbg-btn">DBG</button>
     <button id="cam-btn">⟳</button>
@@ -319,27 +319,37 @@
     return null;
   }
 
-  // ── 3D → 2D manual projection (T+R+S from MediaPipe) ──────────────────
-  // keypoints[i].x is undefined in this JS build; use translation+rotation+scale.
-  // Use separate focal fx=vw, fy=vh to match MediaPipe’s portrait-mode projection.
+  // ── 2D projection ── prefer keypoints.point2d (native), fallback to manual T+R+S ──
   function project3DBox(det, vw, vh, doMirror){
+    const kps=det.keypoints;
     const T=det.translation, R=det.rotation, S=det.scale;
+
+    // ── Strategy 1: use MediaPipe’s own point2d (pixel-perfect) ──
+    if(kps&&kps.length>=9){
+      const pts=kps.map(kp=>{
+        const p=kp?.point2d;
+        if(!p) return null;
+        let nx=p.x??p[0]; let ny=p.y??p[1];
+        if(nx==null||ny==null||isNaN(nx)||isNaN(ny)) return null;
+        let x=nx*vw, y=ny*vh;
+        if(doMirror) x=vw-x;
+        return {x,y,z:T?T[2]:0};
+      });
+      if(pts.every(p=>p!==null)) return pts;
+    }
+
+    // ── Strategy 2: manual projection from T+R+S ──
     if(!T||!R||!S||T.length<3||R.length<9||S.length<3) return null;
     const tx=T[0],ty=T[1],tz=T[2];
-    if(tz>=0) return null; // MediaPipe: -Z = in front of camera
-
-    // fx=vw, fy=vh → MediaPipe normalised-coord back-projection
-    const fx=vw, fy=vh;
-    const ppx=vw/2, ppy=vh/2;
-
+    if(tz>=0) return null;
+    const fx=vw, fy=vh, ppx=vw/2, ppy=vh/2;
     return CORNER_SIGNS.map(([sx,sy,sz])=>{
       const ox=sx*S[0]/2, oy=sy*S[1]/2, oz=sz*S[2]/2;
-      const cx3=R[0]*ox+R[1]*oy+R[2]*oz + tx;
-      const cy3=R[3]*ox+R[4]*oy+R[5]*oz + ty;
-      const cz3=R[6]*ox+R[7]*oy+R[8]*oz + tz;
+      const cx3=R[0]*ox+R[1]*oy+R[2]*oz+tx;
+      const cy3=R[3]*ox+R[4]*oy+R[5]*oz+ty;
+      const cz3=R[6]*ox+R[7]*oy+R[8]*oz+tz;
       if(cz3>=0) return {x:null,y:null,z:cz3};
-      let x=fx*cx3/(-cz3)+ppx;
-      let y=fy*cy3/(-cz3)+ppy;
+      let x=fx*cx3/(-cz3)+ppx, y=fy*cy3/(-cz3)+ppy;
       if(doMirror) x=vw-x;
       return {x,y,z:cz3};
     });
@@ -426,13 +436,18 @@
           const kp=d.keypoints[0];
           const kpType=typeof kp;
           const kpKeys=kp&&kpType==='object'?Object.keys(kp||{}).join(','):'N/A';
+          const p2d=kp?.point2d;
+          const p2dType=typeof p2d;
+          const p2dKeys=p2d&&p2dType==='object'?Object.keys(p2d||{}).join(','):'N/A';
           h+=`<div class="dh">── keypoints ──</div>`;
-          h+=`<div><span class="dk">kp[0] type</span><span class="dv">${kpType}</span></div>`;
           h+=`<div><span class="dk">kp[0] keys</span><span class="dv">${kpKeys||'(none)'}</span></div>`;
-          h+=`<div><span class="dk">kp[0].x</span><span class="dv">${kp?.x}</span></div>`;
-          h+=`<div><span class="dk">kp[0].y</span><span class="dv">${kp?.y}</span></div>`;
-          h+=`<div><span class="dk">kp[0][0]</span><span class="dv">${kp?.[0]}</span></div>`;
-          h+=`<div><span class="dk">kp[0][1]</span><span class="dv">${kp?.[1]}</span></div>`;
+          h+=`<div><span class="dk">point2d type</span><span class="dv">${p2dType}</span></div>`;
+          h+=`<div><span class="dk">point2d keys</span><span class="dv">${p2dKeys}</span></div>`;
+          h+=`<div><span class="dk">p2d.x</span><span class="dv">${p2d?.x}</span></div>`;
+          h+=`<div><span class="dk">p2d.y</span><span class="dv">${p2d?.y}</span></div>`;
+          h+=`<div><span class="dk">p2d[0]</span><span class="dv">${p2d?.[0]}</span></div>`;
+          h+=`<div><span class="dk">p2d[1]</span><span class="dv">${p2d?.[1]}</span></div>`;
+          h+=`<div><span class="dk">strategy</span><span class="dv ${p2d?'ok':'ng'}">${p2d?'point2d':'manual T+R+S'}</span></div>`;
         }
       }
     }
