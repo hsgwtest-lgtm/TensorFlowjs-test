@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+  <title>STYLE — スタイル転送</title>
+
+  <link rel="manifest" href="manifest.json"/>
+  <meta name="theme-color" content="#0a0a0f"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black"/>
+  <meta name="apple-mobile-web-app-title" content="STYLE"/>
+  <link rel="apple-touch-icon" href="icon-192.png"/>
+
+  <!--
+    ── Arbitrary Image Stylization (@magenta/image) ────────────────────────
+    Ghiasi et al. 2017 の Fast Arbitrary Style Transfer を TF.js で実装。
+    style encoder(MobileNet) でスタイル画像のベクターを抽出し、
+    transformer network でコンテンツ画像に適用する 2-stage モデル。
+    iOS Safari は WebGL バックエンドで動作。
+    ────────────────────────────────────────────────────────────────────────
+  -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@magenta/image@0.2.1/es5/arbitrary_stylization/index.js"></script>
+
+  <style>
+    :root {
+      --bg:     #0a0a0f;
+      --accent: #c084fc;
+      --safe-t: env(safe-area-inset-top, 0px);
+      --safe-b: env(safe-area-inset-bottom, 0px);
+    }
+    * { box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent; }
+    html,body { width:100%; height:100dvh; overflow:hidden; background:var(--bg);
+      font-family:'Helvetica Neue','Hiragino Sans',sans-serif; }
+
+    /* ── Video / Canvas layer ── */
+    #video  { position:fixed; inset:0; width:100%; height:100%; object-fit:cover;
+              opacity:0; transition:opacity .5s; }
+    #video.ready  { opacity:1; }
+    #video.mirror { transform:scaleX(-1); }
+    #canvas { position:fixed; inset:0; width:100%; height:100%;
+              pointer-events:none; z-index:5; }
+
+    /* ── Topbar ── */
+    #topbar {
+      position:fixed; top:0; left:0; right:0; z-index:20;
+      padding:calc(var(--safe-t)+6px) 14px 6px;
+      display:flex; align-items:center; gap:8px;
+      background:linear-gradient(rgba(10,10,15,.85),transparent);
+    }
+    .logo { font-size:15px; font-weight:700; letter-spacing:4px; color:#fff; }
+    .sub  { font-size:10px; color:rgba(255,255,255,.4); letter-spacing:2px; margin-left:-4px; }
+    .spacer { flex:1; }
+    #cam-btn {
+      background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.2);
+      color:#fff; font-size:16px; padding:4px 10px; cursor:pointer; border-radius:6px; line-height:1;
+    }
+    #dbg-btn {
+      background:rgba(255,255,255,.08); border:1px solid rgba(0,188,212,.4);
+      color:rgba(0,188,212,.8); font-size:10px; padding:4px 8px; cursor:pointer;
+      border-radius:6px; letter-spacing:1px;
+    }
+    #dbg-btn.active { background:rgba(0,188,212,.2); color:#0ff; border-color:#0ff; }
+    #fps-box {
+      font-size:11px; color:rgba(255,255,255,.6); padding:3px 8px;
+      border:1px solid rgba(255,255,255,.15); border-radius:4px;
+      font-family:'Courier New',monospace; letter-spacing:1px;
+    }
+    #status-dot { width:8px; height:8px; border-radius:50%;
+      background:#00e676; box-shadow:0 0 6px #00e676; animation:blink 1.5s infinite; }
+    #status-dot.loading { background:#ffb800; box-shadow:0 0 6px #ffb800; }
+    #status-dot.error   { background:#ff3a3a; box-shadow:0 0 6px #ff3a3a; animation:none; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    /* ── Debug panel ── */
+    #debug-panel {
+      display:none; position:fixed; bottom:110px; left:8px; right:8px; z-index:30;
+      background:rgba(0,0,0,.93); border:1px solid rgba(0,188,212,.6); border-radius:8px;
+      padding:10px 12px; font-family:'Courier New',monospace; font-size:10.5px;
+      color:#0ff; line-height:1.7; max-height:220px; overflow-y:auto;
+    }
+    #debug-panel.show { display:block; }
+    #debug-panel .dk { color:rgba(255,255,255,.4); display:inline-block; min-width:150px; }
+    #debug-panel .dv { color:#fff; }
+    #debug-panel .dh { color:#ffb800; font-weight:bold; margin-bottom:2px; }
+
+    /* ── Left badges ── */
+    #badges {
+      position:fixed; top:calc(var(--safe-t)+52px); left:12px; z-index:20;
+      display:flex; flex-direction:column; gap:8px;
+    }
+    .badge {
+      width:76px; height:68px;
+      background:rgba(0,188,212,.18); border:1.5px solid rgba(0,188,212,.65);
+      clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);
+      display:flex; flex-direction:column; align-items:center; justify-content:center;
+    }
+    .badge .bval { font-size:15px; font-weight:700; color:#fff; line-height:1; }
+    .badge .blbl { font-size:9px; color:rgba(0,188,212,.9); letter-spacing:1px; margin-top:2px; }
+
+    /* ── Style strength slider ── */
+    #strength-panel {
+      position:fixed; top:50%; right:10px; z-index:20; transform:translateY(-50%);
+      display:flex; flex-direction:column; align-items:center; gap:8px;
+    }
+    #strength-label {
+      font-size:9px; color:rgba(255,255,255,.45); letter-spacing:1px; writing-mode:horizontal-tb;
+    }
+    #strength-val {
+      font-size:13px; font-weight:700; color:#fff;
+      font-family:'Courier New',monospace;
+    }
+    input[type=range]#strength {
+      -webkit-appearance:none; appearance:none;
+      writing-mode:vertical-lr; direction:rtl;
+      width:28px; height:160px;
+      background:transparent; cursor:pointer;
+    }
+    input[type=range]#strength::-webkit-slider-runnable-track {
+      width:4px; background:rgba(192,132,252,.3);
+      border-radius:2px; margin:0 auto;
+    }
+    input[type=range]#strength::-webkit-slider-thumb {
+      -webkit-appearance:none; width:20px; height:20px; border-radius:50%;
+      background:var(--accent); border:2px solid #fff;
+      box-shadow:0 0 8px var(--accent); margin-left:-8px;
+    }
+
+    /* ── Style picker (bottom scroll) ── */
+    #style-bar {
+      position:fixed; bottom:0; left:0; right:0; z-index:20;
+      padding:8px 14px calc(var(--safe-b)+10px);
+      background:linear-gradient(transparent,rgba(10,10,15,.92));
+    }
+    #style-label {
+      font-size:9px; color:rgba(255,255,255,.35); letter-spacing:2px;
+      text-align:center; margin-bottom:6px;
+    }
+    #style-scroll {
+      display:flex; gap:10px; overflow-x:auto; padding-bottom:4px;
+      scrollbar-width:none;
+    }
+    #style-scroll::-webkit-scrollbar { display:none; }
+    .style-thumb {
+      flex-shrink:0; width:64px; height:64px; border-radius:8px;
+      object-fit:cover; cursor:pointer; border:2px solid transparent;
+      transition: border-color .2s, box-shadow .2s, transform .15s;
+    }
+    .style-thumb.active {
+      border-color:var(--accent);
+      box-shadow:0 0 10px var(--accent);
+      transform:scale(1.08);
+    }
+
+    /* ── Splash ── */
+    #splash { position:fixed; inset:0; z-index:100; background:var(--bg);
+      display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px; padding:40px; }
+    #splash h1 { font-size:28px; letter-spacing:8px; color:#fff; font-weight:300; }
+    #splash p  { font-size:12px; letter-spacing:2px; color:rgba(255,255,255,.4); text-align:center; line-height:1.8; }
+    #prog-wrap { width:200px; height:2px; background:rgba(255,255,255,.1); }
+    #prog-bar  { height:100%; width:0%; background:#c084fc; transition:width .3s; }
+    #splash-msg { font-size:11px; color:rgba(255,255,255,.45); letter-spacing:2px; }
+    #start-btn {
+      display:none; padding:12px 36px; border:1px solid rgba(255,255,255,.3);
+      background:rgba(255,255,255,.06); color:#fff; font-size:13px; letter-spacing:4px;
+      cursor:pointer; border-radius:4px; font-family:inherit;
+    }
+    #start-btn.show { display:block; }
+
+    /* ── Permission ── */
+    #perm {
+      display:none; position:fixed; inset:0; z-index:101; background:var(--bg);
+      flex-direction:column; align-items:center; justify-content:center; gap:22px;
+      padding:40px; text-align:center;
+    }
+    #perm.show { display:flex; }
+    #perm .icon { font-size:50px; }
+    #perm p { font-size:13px; color:rgba(255,255,255,.6); line-height:1.8; }
+    #perm-btn {
+      padding:13px 38px; border:1px solid rgba(255,255,255,.3);
+      background:rgba(255,255,255,.08); color:#fff; font-family:inherit;
+      font-size:13px; letter-spacing:3px; cursor:pointer; border-radius:4px;
+    }
+  </style>
+</head>
+<body>
+
+<video id="video" autoplay playsinline muted webkit-playsinline></video>
+<canvas id="canvas"></canvas>
+
+<div id="topbar">
+  <div class="logo">STYLE</div><div class="sub">スタイル転送</div>
+  <div class="spacer"></div>
+  <button id="dbg-btn">DBG</button>
+  <button id="cam-btn">⟳</button>
+  <div id="fps-box">-- FPS</div>
+  <div id="status-dot" class="loading"></div>
+</div>
+
+<div id="debug-panel"></div>
+
+<div id="badges">
+  <div class="badge">
+    <div class="bval" id="badge-style">--</div>
+    <div class="blbl">スタイル</div>
+  </div>
+  <div class="badge">
+    <div class="bval" id="badge-strength">--</div>
+    <div class="blbl">強度</div>
+  </div>
+</div>
+
+<div id="strength-panel">
+  <div id="strength-label">STRENGTH</div>
+  <div id="strength-val">70%</div>
+  <input type="range" id="strength" min="0" max="100" value="70" step="5"/>
+</div>
+
+<div id="style-bar">
+  <div id="style-label">スタイルを選択</div>
+  <div id="style-scroll"></div>
+</div>
+
+<div id="splash">
+  <div style="font-size:48px;filter:drop-shadow(0 0 16px rgba(192,132,252,.5))">🎨</div>
+  <h1>STYLE</h1>
+  <p>リアルタイムスタイル転送 · カメラ映像<br>TF.js Arbitrary Style Transfer</p>
+  <div id="prog-wrap"><div id="prog-bar"></div></div>
+  <div id="splash-msg">モデルを読み込み中…</div>
+  <button id="start-btn">▶ カメラ起動</button>
+</div>
+
+<div id="perm">
+  <div class="icon">📷</div>
+  <p>カメラへのアクセスが必要です<br>次の画面で「許可」を選択してください</p>
+  <button id="perm-btn">アクセスを許可</button>
+</div>
+
+<script>
+(function () {
+  /*
+   * Arbitrary Style Transfer (@magenta/image 0.2.1 / TF.js 4.x)
+   * ─────────────────────────────────────────────────────────────
+   * - styleNetwork.stylize(contentImg, styleImg, strength) → ImageData
+   * - content: HTMLVideoElement (camera frame via drawImage into offscreen)
+   * - style:   pre-loaded HTMLImageElement from DATA URI
+   * - strength (0-1): linear interpolation between original and stylized
+   *   (implemented below as manual lerp if API doesn't support it)
+   * - Inference loop runs async; render loop draws at 60fps.
+   */
+
+  // ── Built-in style images (Base64 Data URIs generated via Canvas) ─────
+  // We generate simple colored patterns programmatically to avoid
+  // external asset dependencies (works offline after first load).
+  const STYLES = [
+    { name:'ゴッホ',    emoji:'🌀', h:30,  s:90, l:45 },
+    { name:'モネ',      emoji:'🌸', h:200, s:60, l:60 },
+    { name:'水墨画',    emoji:'🖌️', h:0,   s:0,  l:50 },
+    { name:'炎',        emoji:'🔥', h:15,  s:95, l:45 },
+    { name:'ネオン',    emoji:'💜', h:280, s:90, l:55 },
+    { name:'大理石',    emoji:'⬜', h:210, s:20, l:75 },
+    { name:'宇宙',      emoji:'🌌', h:240, s:80, l:20 },
+    { name:'サイバー',  emoji:'🟢', h:120, s:100,l:45 },
+    { name:'秋',        emoji:'🍂', h:25,  s:85, l:45 },
+    { name:'海底',      emoji:'🐙', h:195, s:80, l:35 },
+    { name:'桜',        emoji:'🌺', h:340, s:75, l:70 },
+    { name:'砂漠',      emoji:'🏜️', h:40,  s:70, l:55 },
+  ];
+
+  // Generate style pattern canvas (abstract brushstroke-like texture)
+  function makeStyleCanvas(style) {
+    const sz = 128;
+    const c  = document.createElement('canvas');
+    c.width = c.height = sz;
+    const ctx = c.getContext('2d');
+    const { h, s, l } = style;
+
+    // Base
+    ctx.fillStyle = `hsl(${h},${s}%,${l}%)`;
+    ctx.fillRect(0, 0, sz, sz);
+
+    // Random brushstroke patches
+    const rng = mulberry32(h * 137 + s * 31 + l * 7);
+    for (let i = 0; i < 40; i++) {
+      const x  = rng() * sz;
+      const y  = rng() * sz;
+      const r  = 8 + rng() * 30;
+      const dh = (rng() - 0.5) * 60;
+      const dl = (rng() - 0.5) * 40;
+      const alpha = 0.3 + rng() * 0.5;
+      const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
+      grad.addColorStop(0, `hsla(${h+dh},${s}%,${Math.max(10,Math.min(90,l+dl))}%,${alpha})`);
+      grad.addColorStop(1, 'hsla(0,0%,0%,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.ellipse(x, y, r, r * (0.4 + rng() * 0.8), rng() * Math.PI, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    return c;
+  }
+
+  // Simple deterministic RNG (mulberry32)
+  function mulberry32(seed) {
+    let s = seed >>> 0;
+    return function() {
+      s += 0x6D2B79F5;
+      let z = s;
+      z = Math.imul(z ^ z >>> 15, z | 1);
+      z ^= z + Math.imul(z ^ z >>> 7, z | 61);
+      return ((z ^ z >>> 14) >>> 0) / 4294967296;
+    };
+  }
+
+  // ── State ─────────────────────────────────────────────────────────────
+  let styleNet = null, stream = null, animId = null, running = false;
+  let facingMode  = 'user';
+  let fpsArr      = [];
+  let debugMode   = false;
+  let styleIndex  = 0;
+  let strength    = 0.7;
+  let inferBusy   = false;
+  let lastResult  = null;   // last ImageData from stylize()
+
+  // Style images (HTMLImageElement, loaded from canvas data URI)
+  const styleImgs = [];
+  const styleThumbs = [];
+
+  const video  = document.getElementById('video');
+  const canvas = document.getElementById('canvas');
+  const ctx    = canvas.getContext('2d');
+  const dbgEl  = document.getElementById('debug-panel');
+
+  // ── Build style picker UI ─────────────────────────────────────────────
+  const scroll = document.getElementById('style-scroll');
+  STYLES.forEach((st, i) => {
+    const sc = makeStyleCanvas(st);
+    const dataURL = sc.toDataURL('image/jpeg', 0.85);
+
+    // HTMLImageElement for model input
+    const img = new Image();
+    img.src = dataURL;
+    styleImgs.push(img);
+
+    // Thumbnail
+    const thumb = document.createElement('img');
+    thumb.src       = dataURL;
+    thumb.className = 'style-thumb' + (i === 0 ? ' active' : '');
+    thumb.title     = st.name;
+    thumb.addEventListener('click', () => {
+      styleThumbs.forEach(t => t.classList.remove('active'));
+      thumb.classList.add('active');
+      styleIndex = i;
+      lastResult = null; // force re-stylize
+      document.getElementById('badge-style').textContent = st.emoji;
+    });
+    scroll.appendChild(thumb);
+    styleThumbs.push(thumb);
+  });
+
+  // Init badge
+  document.getElementById('badge-style').textContent = STYLES[0].emoji;
+
+  // ── Strength slider ───────────────────────────────────────────────────
+  const sliderEl = document.getElementById('strength');
+  const strengthValEl = document.getElementById('strength-val');
+  sliderEl.addEventListener('input', () => {
+    strength = sliderEl.value / 100;
+    strengthValEl.textContent = sliderEl.value + '%';
+    document.getElementById('badge-strength').textContent = sliderEl.value + '%';
+    lastResult = null;
+  });
+  document.getElementById('badge-strength').textContent = '70%';
+
+  // ── Debug ─────────────────────────────────────────────────────────────
+  document.getElementById('dbg-btn').addEventListener('click', () => {
+    debugMode = !debugMode;
+    dbgEl.classList.toggle('show', debugMode);
+    document.getElementById('dbg-btn').classList.toggle('active', debugMode);
+  });
+
+  let lastInferMs = 0;
+  function updateDebug(vw, vh) {
+    if (!debugMode) return;
+    let html = `<div class="dh">─── DEBUG (Style Transfer) ───</div>`;
+    html += `<div><span class="dk">video</span><span class="dv">${vw}×${vh}</span></div>`;
+    html += `<div><span class="dk">camera</span><span class="dv">${facingMode}</span></div>`;
+    html += `<div><span class="dk">style</span><span class="dv">${STYLES[styleIndex].name}</span></div>`;
+    html += `<div><span class="dk">strength</span><span class="dv">${Math.round(strength*100)}%</span></div>`;
+    html += `<div><span class="dk">last infer</span><span class="dv">${lastInferMs} ms</span></div>`;
+    html += `<div><span class="dk">backend</span><span class="dv">${tf.getBackend()}</span></div>`;
+    dbgEl.innerHTML = html;
+  }
+
+  // ── Load model ────────────────────────────────────────────────────────
+  async function loadModel() {
+    const bar = document.getElementById('prog-bar');
+    const msg = document.getElementById('splash-msg');
+
+    bar.style.width = '15%';
+    msg.textContent = 'TF.js WebGL 初期化中…';
+    await tf.setBackend('webgl');
+    await tf.ready();
+
+    bar.style.width = '35%';
+    msg.textContent = 'スタイル転送モデル読み込み中…';
+
+    styleNet = new mi.ArbitraryStyleTransferNetwork();
+    await styleNet.initialize();
+
+    bar.style.width = '90%';
+    msg.textContent = '準備完了 — Arbitrary Style Transfer';
+    await new Promise(r => setTimeout(r, 400));
+    bar.style.width = '100%';
+    await new Promise(r => setTimeout(r, 150));
+    document.getElementById('start-btn').classList.add('show');
+    msg.textContent = 'タップして開始';
+  }
+
+  // ── Camera ────────────────────────────────────────────────────────────
+  async function startCamera() {
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: facingMode }, width: { ideal: 640 }, height: { ideal: 480 } },
+      audio: false,
+    });
+    video.srcObject = stream;
+    await new Promise(r => { video.onloadedmetadata = r; });
+    await new Promise(r => {
+      if (video.readyState >= 2) { r(); return; }
+      video.oncanplay = r;
+    });
+    video.play();
+    resizeCanvas();
+    video.classList.add('ready');
+    video.classList.toggle('mirror', facingMode === 'user');
+    lastResult = null;
+  }
+
+  function resizeCanvas() {
+    canvas.width  = video.videoWidth  || window.innerWidth;
+    canvas.height = video.videoHeight || window.innerHeight;
+  }
+
+  // ── Capture video frame as small image for stylize() input ───────────
+  // Style transfer runs on a downscaled frame (256px) for speed;
+  // the result is drawn scaled-up to canvas.
+  let captureCanvas = null;
+  const INFER_SIZE = 256;
+
+  function captureFrame() {
+    if (!captureCanvas) {
+      captureCanvas = document.createElement('canvas');
+      captureCanvas.width = captureCanvas.height = INFER_SIZE;
+    }
+    const cc = captureCanvas.getContext('2d');
+    const vw = video.videoWidth, vh = video.videoHeight;
+    // Crop to square center, then scale to INFER_SIZE
+    const min = Math.min(vw, vh);
+    const sx  = (vw - min) / 2;
+    const sy  = (vh - min) / 2;
+    if (facingMode === 'user') {
+      cc.save();
+      cc.translate(INFER_SIZE, 0);
+      cc.scale(-1, 1);
+    }
+    cc.drawImage(video, sx, sy, min, min, 0, 0, INFER_SIZE, INFER_SIZE);
+    if (facingMode === 'user') cc.restore();
+    return captureCanvas;
+  }
+
+  // ── Inference loop (async) ────────────────────────────────────────────
+  async function inferLoop() {
+    while (running) {
+      if (video.readyState < 2 || inferBusy) {
+        await new Promise(r => setTimeout(r, 32));
+        continue;
+      }
+      inferBusy = true;
+      const t0 = performance.now();
+      try {
+        const contentImg = captureFrame();
+        const styleImg   = styleImgs[styleIndex];
+
+        // stylize() returns ImageData
+        const raw = await styleNet.stylize(contentImg, styleImg);
+
+        // Apply strength: blend stylized result with original frame
+        if (strength >= 0.99) {
+          lastResult = raw;
+        } else {
+          // Manual lerp: blend raw stylized with original capture pixels
+          const origData = captureCanvas.getContext('2d')
+            .getImageData(0, 0, INFER_SIZE, INFER_SIZE);
+          const blended  = new ImageData(INFER_SIZE, INFER_SIZE);
+          const a = strength, b = 1 - strength;
+          for (let i = 0; i < raw.data.length; i += 4) {
+            blended.data[i]   = raw.data[i]   * a + origData.data[i]   * b;
+            blended.data[i+1] = raw.data[i+1] * a + origData.data[i+1] * b;
+            blended.data[i+2] = raw.data[i+2] * a + origData.data[i+2] * b;
+            blended.data[i+3] = 255;
+          }
+          lastResult = blended;
+        }
+
+        lastInferMs = Math.round(performance.now() - t0);
+        const fps = 1000 / (performance.now() - t0);
+        fpsArr.push(fps);
+        if (fpsArr.length > 5) fpsArr.shift();
+        document.getElementById('fps-box').textContent =
+          Math.round(fpsArr.reduce((a, b) => a + b) / fpsArr.length) + ' FPS';
+
+      } catch (e) { console.warn('Style infer error:', e); }
+      inferBusy = false;
+    }
+  }
+
+  // ── Render loop (60fps) ───────────────────────────────────────────────
+  let resultCanvas = null;
+  function renderLoop() {
+    if (!running) return;
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (vw && vh) {
+      if (canvas.width !== vw || canvas.height !== vh) resizeCanvas();
+
+      if (lastResult) {
+        // Draw stylized result (256×256 square) scaled to fill canvas
+        if (!resultCanvas || resultCanvas.width !== INFER_SIZE) {
+          resultCanvas = document.createElement('canvas');
+          resultCanvas.width = resultCanvas.height = INFER_SIZE;
+        }
+        resultCanvas.getContext('2d').putImageData(lastResult, 0, 0);
+        ctx.drawImage(resultCanvas, 0, 0, vw, vh);
+      }
+      updateDebug(vw, vh);
+    }
+    animId = requestAnimationFrame(renderLoop);
+  }
+
+  function startLoops() {
+    lastResult = null; fpsArr = [];
+    inferLoop();
+    animId = requestAnimationFrame(renderLoop);
+  }
+
+  // ── Controls ──────────────────────────────────────────────────────────
+  document.getElementById('cam-btn').addEventListener('click', async () => {
+    facingMode = facingMode === 'environment' ? 'user' : 'environment';
+    if (running) {
+      running = false;
+      cancelAnimationFrame(animId);
+      captureCanvas = null;
+      await startCamera();
+      running = true;
+      startLoops();
+    }
+  });
+
+  document.getElementById('start-btn').addEventListener('click', () => {
+    document.getElementById('splash').style.display = 'none';
+    document.getElementById('perm').classList.add('show');
+  });
+
+  document.getElementById('perm-btn').addEventListener('click', async () => {
+    document.getElementById('perm').classList.remove('show');
+    try {
+      await startCamera();
+      running = true;
+      document.getElementById('status-dot').classList.remove('loading');
+      startLoops();
+    } catch (e) {
+      document.getElementById('status-dot').classList.add('error');
+      document.querySelector('#perm p').textContent =
+        'カメラへのアクセスが拒否されました。\nSafari設定→プライバシー→カメラ を確認してください。';
+      document.getElementById('perm').classList.add('show');
+    }
+  });
+
+  window.addEventListener('resize', resizeCanvas);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+
+  loadModel().catch(e => {
+    document.getElementById('splash-msg').textContent = 'モデルの読み込みに失敗しました: ' + e.message;
+    document.getElementById('status-dot').classList.add('error');
+    console.error(e);
+  });
+})();
+</script>
+</body>
+</html>
