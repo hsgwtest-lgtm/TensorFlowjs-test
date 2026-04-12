@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+  <title>BODY — 身体部位検出</title>
+
+  <link rel="manifest" href="manifest.json"/>
+  <meta name="theme-color" content="#0a0a0f"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black"/>
+  <meta name="apple-mobile-web-app-title" content="BODY"/>
+  <link rel="apple-touch-icon" href="icon-192.png"/>
+
+  <!--
+    ── TensorFlow.js BodyPix ────────────────────────────────────────────────
+    BodyPix v2 は TF.js WebGL バックエンドで動作する。
+    MobileNetV1 0.75 + stride 16 + quantBytes 2 で mobile に最適化。
+    segmentPersonParts() が 24 部位ラベルの Int32Array を返す (-1=背景)。
+    前面カメラ時は flipHorizontal:true を渡し、CSS mirror と整合させる。
+    ────────────────────────────────────────────────────────────────────────
+  -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/body-pix@2.2.0/dist/body-pix.min.js"></script>
+
+  <style>
+    :root {
+      --bg:    #0a0a0f;
+      --face:  #ff6b6b;
+      --larm:  #4a9eff;
+      --rarm:  #ff8c00;
+      --torso: #00e676;
+      --lleg:  #c084fc;
+      --rleg:  #ffb800;
+      --safe-t: env(safe-area-inset-top, 0px);
+      --safe-b: env(safe-area-inset-bottom, 0px);
+    }
+    * { box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent; }
+    html,body { width:100%; height:100dvh; overflow:hidden; background:var(--bg);
+      font-family:'Helvetica Neue','Hiragino Sans',sans-serif; }
+
+    #video  { position:fixed; inset:0; width:100%; height:100%; object-fit:cover; opacity:0; transition:opacity .5s; }
+    #video.ready  { opacity:1; }
+    #video.mirror { transform:scaleX(-1); }
+    #canvas { position:fixed; inset:0; width:100%; height:100%; pointer-events:none; z-index:5; }
+
+    /* ── Topbar ── */
+    #topbar {
+      position:fixed; top:0; left:0; right:0; z-index:20;
+      padding:calc(var(--safe-t)+6px) 14px 6px;
+      display:flex; align-items:center; gap:8px;
+      background:linear-gradient(rgba(10,10,15,.85),transparent);
+    }
+    .logo { font-size:15px; font-weight:700; letter-spacing:4px; color:#fff; }
+    .sub  { font-size:10px; color:rgba(255,255,255,.4); letter-spacing:2px; margin-left:-4px; }
+    .spacer { flex:1; }
+    #cam-btn {
+      background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.2);
+      color:#fff; font-size:16px; padding:4px 10px; cursor:pointer; border-radius:6px; line-height:1;
+    }
+    #dbg-btn {
+      background:rgba(255,255,255,.08); border:1px solid rgba(0,188,212,.4);
+      color:rgba(0,188,212,.8); font-size:10px; padding:4px 8px; cursor:pointer;
+      border-radius:6px; letter-spacing:1px;
+    }
+    #dbg-btn.active { background:rgba(0,188,212,.2); color:#0ff; border-color:#0ff; }
+    #mode-btn {
+      background:rgba(255,255,255,.08); border:1px solid rgba(192,132,252,.4);
+      color:rgba(192,132,252,.8); font-size:10px; padding:4px 8px; cursor:pointer;
+      border-radius:6px; letter-spacing:1px;
+    }
+    #mode-btn.m12 { border-color:rgba(255,184,0,.5); color:rgba(255,184,0,.9); }
+    #mode-btn.m12.active { background:rgba(255,184,0,.2); color:#ffb800; border-color:#ffb800; }
+    #mode-btn.m24 { border-color:rgba(0,229,255,.5); color:rgba(0,229,255,.9); }
+    #mode-btn.m24.active { background:rgba(0,229,255,.2); color:#00e5ff; border-color:#00e5ff; }
+    #fps-box {
+      font-size:11px; color:rgba(255,255,255,.6); padding:3px 8px;
+      border:1px solid rgba(255,255,255,.15); border-radius:4px;
+      font-family:'Courier New',monospace; letter-spacing:1px;
+    }
+    #status-dot { width:8px; height:8px; border-radius:50%;
+      background:#00e676; box-shadow:0 0 6px #00e676; animation:blink 1.5s infinite; }
+    #status-dot.loading { background:#ffb800; box-shadow:0 0 6px #ffb800; }
+    #status-dot.error   { background:#ff3a3a; box-shadow:0 0 6px #ff3a3a; animation:none; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    /* ── Debug panel ── */
+    #debug-panel {
+      display:none; position:fixed; bottom:110px; left:8px; right:8px; z-index:30;
+      background:rgba(0,0,0,.93); border:1px solid rgba(0,188,212,.6); border-radius:8px;
+      padding:10px 12px; font-family:'Courier New',monospace; font-size:10.5px;
+      color:#0ff; line-height:1.7; max-height:220px; overflow-y:auto;
+    }
+    #debug-panel.show { display:block; }
+    #debug-panel .dk { color:rgba(255,255,255,.4); display:inline-block; min-width:150px; }
+    #debug-panel .dv { color:#fff; }
+    #debug-panel .dh { color:#ffb800; font-weight:bold; margin-bottom:2px; }
+
+    /* ── Left badges ── */
+    #badges {
+      position:fixed; top:calc(var(--safe-t)+52px); left:12px; z-index:20;
+      display:none; flex-direction:column; gap:8px;
+    }
+    #badges.show { display:flex; }
+    .badge {
+      width:76px; height:68px;
+      background:rgba(0,188,212,.18); border:1.5px solid rgba(0,188,212,.65);
+      clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);
+      display:flex; flex-direction:column; align-items:center; justify-content:center;
+    }
+    .badge .bval { font-size:17px; font-weight:700; color:#fff; line-height:1; }
+    .badge .blbl { font-size:9px;  color:rgba(0,188,212,.9); letter-spacing:1px; margin-top:2px; }
+
+    /* ── Info panel (right side) ── */
+    #info-panel {
+      position:fixed; top:50%; right:10px; z-index:20; transform:translateY(-50%);
+      display:none; flex-direction:column; gap:4px;
+      max-height:60vh; overflow-y:auto;
+    }
+    #info-panel.show { display:flex; }
+    .part-row {
+      display:flex; align-items:center; gap:6px;
+      background:rgba(10,10,15,.75); border:1px solid rgba(255,255,255,.1);
+      border-radius:6px; padding:5px 8px; font-size:11px;
+      color:rgba(255,255,255,.4); white-space:nowrap;
+      transition: border-color .25s, background .25s, color .25s, box-shadow .25s;
+    }
+    .part-row.active { background:rgba(10,10,15,.92); color:#fff; }
+    .part-dot {
+      width:9px; height:9px; border-radius:50%; flex-shrink:0;
+      opacity:0.25; transition: opacity .25s, box-shadow .25s;
+    }
+    .part-row.active .part-dot { opacity:1; }
+    .part-name { flex:1; }
+    .part-pct {
+      font-family:'Courier New',monospace; font-size:9px;
+      min-width:28px; text-align:right; opacity:0.65;
+    }
+
+    /* ── Bottom panel ── */
+    #bottom {
+      position:fixed; bottom:0; left:0; right:0; z-index:20;
+      padding:8px 14px calc(var(--safe-b)+10px);
+      background:linear-gradient(transparent,rgba(10,10,15,.88));
+      display:none; flex-direction:column; gap:4px;
+    }
+    #bottom.show { display:flex; }
+    #body-status { font-size:11px; color:rgba(255,255,255,.5); text-align:center; letter-spacing:1px; }
+    #body-status span { font-weight:700; color:#fff; }
+    .legend-row { display:flex; justify-content:center; gap:10px; flex-wrap:wrap; margin-top:3px; }
+    .leg-item { font-size:9px; display:flex; align-items:center; gap:4px; color:rgba(255,255,255,.5); }
+    .leg-dot  { width:7px; height:7px; border-radius:50%; }
+
+    /* ── Splash ── */
+    #splash { position:fixed; inset:0; z-index:100; background:var(--bg);
+      display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px; padding:40px; }
+    #splash h1 { font-size:28px; letter-spacing:8px; color:#fff; font-weight:300; }
+    #splash p  { font-size:12px; letter-spacing:2px; color:rgba(255,255,255,.4); text-align:center; line-height:1.8; }
+    #prog-wrap { width:200px; height:2px; background:rgba(255,255,255,.1); }
+    #prog-bar  { height:100%; width:0%; background:#00bcd4; transition:width .3s; }
+    #splash-msg { font-size:11px; color:rgba(255,255,255,.45); letter-spacing:2px; }
+    #start-btn {
+      display:none; padding:12px 36px; border:1px solid rgba(255,255,255,.3);
+      background:rgba(255,255,255,.06); color:#fff; font-size:13px; letter-spacing:4px;
+      cursor:pointer; border-radius:4px; font-family:inherit;
+    }
+    #start-btn.show { display:block; }
+    .body-icon { font-size:48px; filter:drop-shadow(0 0 16px rgba(0,188,212,.5)); }
+
+    /* ── Permission ── */
+    #perm {
+      display:none; position:fixed; inset:0; z-index:101; background:var(--bg);
+      flex-direction:column; align-items:center; justify-content:center; gap:22px;
+      padding:40px; text-align:center;
+    }
+    #perm.show { display:flex; }
+    #perm .icon { font-size:50px; }
+    #perm p { font-size:13px; color:rgba(255,255,255,.6); line-height:1.8; }
+    #perm-btn {
+      padding:13px 38px; border:1px solid rgba(255,255,255,.3);
+      background:rgba(255,255,255,.08); color:#fff; font-family:inherit;
+      font-size:13px; letter-spacing:3px; cursor:pointer; border-radius:4px;
+    }
+  </style>
+</head>
+<body>
+
+<video id="video" autoplay playsinline muted webkit-playsinline></video>
+<canvas id="canvas"></canvas>
+
+<div id="topbar">
+  <div class="logo">BODY</div><div class="sub">部位検出</div>
+  <div class="spacer"></div>
+  <button id="mode-btn">6色</button>
+  <button id="dbg-btn">DBG</button>
+  <button id="cam-btn">⟳</button>
+  <div id="fps-box">-- FPS</div>
+  <div id="status-dot" class="loading"></div>
+</div>
+
+<div id="debug-panel"></div>
+
+<div id="badges">
+  <div class="badge">
+    <div class="bval" id="person-count">--</div>
+    <div class="blbl">人数</div>
+  </div>
+  <div class="badge">
+    <div class="bval" id="coverage">--%</div>
+    <div class="blbl">カバー率</div>
+  </div>
+</div>
+
+<div id="info-panel"></div>
+
+<div id="bottom">
+  <div id="body-status">人物をカメラに映してください 👤</div>
+  <div class="legend-row"></div>
+</div>
+
+<div id="splash">
+  <div class="body-icon">🧍</div>
+  <h1>BODY</h1>
+  <p>身体部位セグメンテーション · リアルタイム<br>TensorFlow.js BodyPix</p>
+  <div id="prog-wrap"><div id="prog-bar"></div></div>
+  <div id="splash-msg">モデルを読み込み中…</div>
+  <button id="start-btn">▶ カメラ起動</button>
+</div>
+
+<div id="perm">
+  <div class="icon">📷</div>
+  <p>カメラへのアクセスが必要です<br>次の画面で「許可」を選択してください</p>
+  <button id="perm-btn">アクセスを許可</button>
+</div>
+
+<script>
+(function () {
+  /*
+   * BodyPix segmentPersonParts() — 24 part IDs (Int32Array, -1 = background):
+   *   0,1   : left_face, right_face
+   *   2,3   : left_upper_arm_front/back    4,5   : right_upper_arm_front/back
+   *   6,7   : left_lower_arm_front/back    8,9   : right_lower_arm_front/back
+   *  10,11  : left_hand, right_hand       12,13  : torso_front, torso_back
+   *  14,15  : left_upper_leg_front/back   16,17  : right_upper_leg_front/back
+   *  18,19  : left_lower_leg_front/back   20,21  : right_lower_leg_front/back
+   *  22,23  : left_foot, right_foot
+   */
+
+  // ── 6-group (顔/左腕/右腕/胴体/左脚/右脚) ──────────────────────────────
+  const GROUPS_6 = [
+    { id:'face',  label:'顔',   parts:[0,1],            color:'#ff6b6b', rgb:[255,107,107] },
+    { id:'larm',  label:'左腕', parts:[2,3,6,7,10],     color:'#4a9eff', rgb:[74,158,255]  },
+    { id:'rarm',  label:'右腕', parts:[4,5,8,9,11],     color:'#ff8c00', rgb:[255,140,0]   },
+    { id:'torso', label:'胴体', parts:[12,13],           color:'#00e676', rgb:[0,230,118]   },
+    { id:'lleg',  label:'左脚', parts:[14,15,18,19,22], color:'#c084fc', rgb:[192,132,252] },
+    { id:'rleg',  label:'右脚', parts:[16,17,20,21,23], color:'#ffb800', rgb:[255,184,0]   },
+  ];
+
+  // ── 12-group (上腕/前腕/手/大腿/下腿/足を分離) ──────────────────────────
+  const GROUPS_12 = [
+    { id:'face',    label:'顔',    parts:[0,1],     color:'#ff6b6b', rgb:[255,107,107] },
+    { id:'luarm',   label:'左上腕', parts:[2,3],    color:'#4a9eff', rgb:[74,158,255]  },
+    { id:'ruarm',   label:'右上腕', parts:[4,5],    color:'#ff8c00', rgb:[255,140,0]   },
+    { id:'llarm',   label:'左前腕', parts:[6,7],    color:'#00e676', rgb:[0,230,118]   },
+    { id:'rlarm',   label:'右前腕', parts:[8,9],    color:'#c084fc', rgb:[192,132,252] },
+    { id:'hands',   label:'手',    parts:[10,11],   color:'#ffb800', rgb:[255,184,0]   },
+    { id:'torso',   label:'胴体',  parts:[12,13],   color:'#00e5ff', rgb:[0,229,255]   },
+    { id:'luthigh', label:'左大腿', parts:[14,15],  color:'#ff4081', rgb:[255,64,129]  },
+    { id:'ruthigh', label:'右大腿', parts:[16,17],  color:'#69f0ae', rgb:[105,240,174] },
+    { id:'llcalf',  label:'左下腿', parts:[18,19],  color:'#b388ff', rgb:[179,136,255] },
+    { id:'rlcalf',  label:'右下腿', parts:[20,21],  color:'#ffcc02', rgb:[255,204,2]   },
+    { id:'feet',    label:'足',    parts:[22,23],   color:'#80deea', rgb:[128,222,234] },
+  ];
+
+  // ── 24-group (全部位を個別に識別) ────────────────────────────────────────
+  const GROUPS_24 = [
+    { id:'p0',  label:'左頬',    parts:[0],  color:'#ff6b6b', rgb:[255,107,107] },
+    { id:'p1',  label:'右頬',    parts:[1],  color:'#ff9f9f', rgb:[255,159,159] },
+    { id:'p2',  label:'左上腕前', parts:[2],  color:'#4a9eff', rgb:[74,158,255]  },
+    { id:'p3',  label:'左上腕後', parts:[3],  color:'#2370d4', rgb:[35,112,212]  },
+    { id:'p4',  label:'右上腕前', parts:[4],  color:'#ff8c00', rgb:[255,140,0]   },
+    { id:'p5',  label:'右上腕後', parts:[5],  color:'#c46a00', rgb:[196,106,0]   },
+    { id:'p6',  label:'左前腕前', parts:[6],  color:'#00e676', rgb:[0,230,118]   },
+    { id:'p7',  label:'左前腕後', parts:[7],  color:'#00a854', rgb:[0,168,84]    },
+    { id:'p8',  label:'右前腕前', parts:[8],  color:'#c084fc', rgb:[192,132,252] },
+    { id:'p9',  label:'右前腕後', parts:[9],  color:'#9333ea', rgb:[147,51,234]  },
+    { id:'p10', label:'左手',    parts:[10], color:'#ffb800', rgb:[255,184,0]   },
+    { id:'p11', label:'右手',    parts:[11], color:'#d48a00', rgb:[212,138,0]   },
+    { id:'p12', label:'胴体前',  parts:[12], color:'#00e5ff', rgb:[0,229,255]   },
+    { id:'p13', label:'胴体後',  parts:[13], color:'#0097a7', rgb:[0,151,167]   },
+    { id:'p14', label:'左大腿前', parts:[14], color:'#ff4081', rgb:[255,64,129]  },
+    { id:'p15', label:'左大腿後', parts:[15], color:'#c2185b', rgb:[194,24,91]   },
+    { id:'p16', label:'右大腿前', parts:[16], color:'#69f0ae', rgb:[105,240,174] },
+    { id:'p17', label:'右大腿後', parts:[17], color:'#2e7d52', rgb:[46,125,82]   },
+    { id:'p18', label:'左下腿前', parts:[18], color:'#b388ff', rgb:[179,136,255] },
+    { id:'p19', label:'左下腿後', parts:[19], color:'#7c52cc', rgb:[124,82,204]  },
+    { id:'p20', label:'右下腿前', parts:[20], color:'#ffcc02', rgb:[255,204,2]   },
+    { id:'p21', label:'右下腿後', parts:[21], color:'#c49800', rgb:[196,152,0]   },
+    { id:'p22', label:'左足',    parts:[22], color:'#80deea', rgb:[128,222,234] },
+    { id:'p23', label:'右足',    parts:[23], color:'#4a9fa8', rgb:[74,159,168]  },
+  ];
+
+  const MODE_LIST  = [6, 12, 24];
+  const GROUPS_MAP = { 6: GROUPS_6, 12: GROUPS_12, 24: GROUPS_24 };
+
+  let currentMode      = 6;
+  let currentGroups    = GROUPS_6;
+  let currentPartToGroup = buildPartToGroup(GROUPS_6);
+
+  function buildPartToGroup(groups) {
+    const arr = new Int8Array(24).fill(-1);
+    groups.forEach((g, gi) => g.parts.forEach(pid => { arr[pid] = gi; }));
+    return arr;
+  }
+
+  function buildInfoPanel(groups) {
+    const panel = document.getElementById('info-panel');
+    panel.innerHTML = '';
+    groups.forEach(g => {
+      const row = document.createElement('div');
+      row.className = 'part-row';
+      row.id = 'row-' + g.id;
+      row.innerHTML =
+        `<div class="part-dot" style="background:${g.color};box-shadow:0 0 5px ${g.color};"></div>` +
+        `<span class="part-name">${g.label}</span>` +
+        `<span class="part-pct" id="pct-${g.id}">--</span>`;
+      panel.appendChild(row);
+    });
+  }
+
+  function buildLegend(groups) {
+    const row = document.querySelector('.legend-row');
+    row.innerHTML = '';
+    groups.forEach(g => {
+      const item = document.createElement('div');
+      item.className = 'leg-item';
+      item.innerHTML = `<div class="leg-dot" style="background:${g.color};"></div>${g.label}`;
+      row.appendChild(item);
+    });
+  }
+
+  function setMode(n) {
+    currentMode        = n;
+    currentGroups      = GROUPS_MAP[n];
+    currentPartToGroup = buildPartToGroup(currentGroups);
+    const btn = document.getElementById('mode-btn');
+    btn.textContent = n + '色';
+    btn.className = n === 12 ? 'm12' : n === 24 ? 'm24' : '';
+    buildInfoPanel(currentGroups);
+    buildLegend(currentGroups);
+    offCanvas = null;
+  }
+
+  // ── State ──────────────────────────────────────────────────────────────
+  let net = null, stream = null, animId = null, running = false;
+  let facingMode = 'user', lastTime = 0, fpsArr = [];
+  let debugMode = false;
+  let offCanvas = null, offCtx = null;
+
+  const video  = document.getElementById('video');
+  const canvas = document.getElementById('canvas');
+  const ctx    = canvas.getContext('2d');
+  const dbgEl  = document.getElementById('debug-panel');
+
+  // Init panel with default 6-group mode
+  setMode(6);
+
+  // ── Mode toggle ────────────────────────────────────────────────────────
+  document.getElementById('mode-btn').addEventListener('click', () => {
+    const idx = MODE_LIST.indexOf(currentMode);
+    setMode(MODE_LIST[(idx + 1) % MODE_LIST.length]);
+  });
+
+  // ── Debug toggle ───────────────────────────────────────────────────────
+  document.getElementById('dbg-btn').addEventListener('click', () => {
+    debugMode = !debugMode;
+    dbgEl.classList.toggle('show', debugMode);
+    document.getElementById('dbg-btn').classList.toggle('active', debugMode);
+  });
+
+  function updateDebug(seg, vw, vh, bodyPx, total) {
+    if (!debugMode) return;
+    let html = `<div class="dh">─── DEBUG (BodyPix) ───</div>`;
+    html += `<div><span class="dk">video</span><span class="dv">${vw}×${vh}</span></div>`;
+    html += `<div><span class="dk">camera</span><span class="dv">${facingMode}</span></div>`;
+    html += `<div><span class="dk">flipHorizontal</span><span class="dv">${facingMode === 'user'}</span></div>`;
+    html += `<div><span class="dk">seg size</span><span class="dv">${seg ? seg.width+'×'+seg.height : '--'}</span></div>`;
+    html += `<div><span class="dk">persons (poses)</span><span class="dv">${seg && seg.allPoses ? seg.allPoses.length : '--'}</span></div>`;
+    html += `<div><span class="dk">body px / total</span><span class="dv">${bodyPx} / ${total} (${total ? Math.round(bodyPx/total*100) : 0}%)</span></div>`;
+    html += `<div><span class="dk">mode</span><span class="dv">${currentMode}色</span></div>`;
+    html += `<div><span class="dk">backend</span><span class="dv">${tf.getBackend()}</span></div>`;
+    dbgEl.innerHTML = html;
+  }
+
+  // ── Load model ─────────────────────────────────────────────────────────
+  async function loadModel() {
+    const bar = document.getElementById('prog-bar');
+    const msg = document.getElementById('splash-msg');
+
+    bar.style.width = '15%';
+    msg.textContent = 'TF.js WebGL 初期化中…';
+    await tf.setBackend('webgl');
+    await tf.ready();
+
+    bar.style.width = '35%';
+    msg.textContent = 'BodyPix モデル読み込み中…';
+
+    net = await bodyPix.load({
+      architecture: 'MobileNetV1',
+      outputStride:  16,
+      multiplier:    0.75,
+      quantBytes:    2,
+    });
+
+    bar.style.width = '90%';
+    msg.textContent = '準備完了 — BodyPix MobileNetV1 0.75';
+    await new Promise(r => setTimeout(r, 400));
+    bar.style.width = '100%';
+    await new Promise(r => setTimeout(r, 150));
+    document.getElementById('start-btn').classList.add('show');
+    msg.textContent = 'タップして開始';
+  }
+
+  // ── Camera ─────────────────────────────────────────────────────────────
+  async function startCamera() {
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: facingMode }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false,
+    });
+    video.srcObject = stream;
+    await new Promise(r => { video.onloadedmetadata = r; });
+    await new Promise(r => {
+      if (video.readyState >= 2) { r(); return; }
+      video.oncanplay = r;
+    });
+    video.play();
+    resizeCanvas();
+    video.classList.add('ready');
+    video.classList.toggle('mirror', facingMode === 'user');
+  }
+
+  function resizeCanvas() {
+    canvas.width  = video.videoWidth  || window.innerWidth;
+    canvas.height = video.videoHeight || window.innerHeight;
+    offCanvas = null; // force re-create on next frame
+  }
+
+  // ── Main loop ──────────────────────────────────────────────────────────
+  async function loop() {
+    if (!running) return;
+
+    const now = performance.now(), dt = now - lastTime;
+    lastTime = now;
+    if (dt > 0) {
+      fpsArr.push(1000 / dt);
+      if (fpsArr.length > 8) fpsArr.shift();
+      document.getElementById('fps-box').textContent =
+        Math.round(fpsArr.reduce((a, b) => a + b) / fpsArr.length) + ' FPS';
+    }
+
+    if (video.readyState < 2) { animId = requestAnimationFrame(loop); return; }
+
+    let seg = null;
+    try {
+      seg = await net.segmentPersonParts(video, {
+        flipHorizontal:        facingMode === 'user',
+        internalResolution:   'medium',
+        segmentationThreshold: 0.7,
+        maxDetections:         5,
+        scoreThreshold:        0.3,
+        nmsRadius:             20,
+      });
+    } catch (e) { console.warn('BodyPix inference error:', e); }
+
+    draw(seg);
+    animId = requestAnimationFrame(loop);
+  }
+
+  // ── Draw ───────────────────────────────────────────────────────────────
+  function draw(seg) {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw || !vh) return;
+    if (canvas.width !== vw || canvas.height !== vh) resizeCanvas();
+    ctx.clearRect(0, 0, vw, vh);
+
+    const badges  = document.getElementById('badges');
+    const infoP   = document.getElementById('info-panel');
+    const bottomB = document.getElementById('bottom');
+
+    if (!seg || !seg.data) {
+      badges.classList.remove('show');
+      infoP.classList.remove('show');
+      bottomB.classList.remove('show');
+      updateDebug(null, vw, vh, 0, 0);
+      return;
+    }
+
+    const sw = seg.width, sh = seg.height;
+    const total = seg.data.length;
+
+    // ── Prepare offscreen canvas ──────────────────────────────────────────
+    if (!offCanvas || offCanvas.width !== sw || offCanvas.height !== sh) {
+      offCanvas = document.createElement('canvas');
+      offCanvas.width  = sw;
+      offCanvas.height = sh;
+      offCtx = offCanvas.getContext('2d');
+    }
+
+    // ── Build colored segmentation (single pass) ──────────────────────────
+    const imgData   = offCtx.createImageData(sw, sh);
+    const px        = imgData.data;
+    const groups      = currentGroups;
+    const partToGroup  = currentPartToGroup;
+    const groupPx      = new Int32Array(groups.length);
+    let   bodyPixels   = 0;
+
+    for (let i = 0; i < total; i++) {
+      const pid = seg.data[i];
+      const idx = i * 4;
+      if (pid === -1) {
+        px[idx + 3] = 0; // background → transparent
+      } else {
+        const gi = partToGroup[pid];
+        if (gi >= 0) {
+          const [r, g, b] = groups[gi].rgb;
+          px[idx]     = r;
+          px[idx + 1] = g;
+          px[idx + 2] = b;
+          px[idx + 3] = 185; // ~72% opacity — video visible through overlay
+          groupPx[gi]++;
+          bodyPixels++;
+        }
+      }
+    }
+
+    updateDebug(seg, vw, vh, bodyPixels, total);
+
+    if (bodyPixels === 0) {
+      badges.classList.remove('show');
+      infoP.classList.remove('show');
+      bottomB.classList.remove('show');
+      return;
+    }
+
+    // ── Composite onto main canvas (scaled to video resolution) ──────────
+    offCtx.putImageData(imgData, 0, 0);
+    ctx.drawImage(offCanvas, 0, 0, vw, vh);
+
+    badges.classList.add('show');
+    infoP.classList.add('show');
+    bottomB.classList.add('show');
+
+    // ── Update badge stats ────────────────────────────────────────────────
+    const persons  = seg.allPoses && seg.allPoses.length > 0 ? seg.allPoses.length : 1;
+    const coverage = Math.round(bodyPixels / total * 100);
+    document.getElementById('person-count').textContent = persons;
+    document.getElementById('coverage').textContent     = coverage + '%';
+
+    // ── Update part info panel ────────────────────────────────────────────
+    const detectedLabels = [];
+    groups.forEach((g, gi) => {
+      const detected = groupPx[gi] > 0;
+      const pct = detected ? Math.round(groupPx[gi] / bodyPixels * 100) : 0;
+      const row   = document.getElementById('row-' + g.id);
+      const pctEl = document.getElementById('pct-' + g.id);
+
+      row.classList.toggle('active', detected);
+      if (detected) {
+        row.style.borderColor = g.color;
+        row.style.boxShadow   = `0 0 8px ${g.color}44`;
+        pctEl.textContent     = pct + '%';
+        detectedLabels.push(g.label);
+      } else {
+        row.style.borderColor = '';
+        row.style.boxShadow   = '';
+        pctEl.textContent     = '--';
+      }
+    });
+
+    document.getElementById('body-status').textContent =
+      detectedLabels.length > 0
+        ? `検出中: ${detectedLabels.join('・')}`
+        : '人物をカメラに映してください 👤';
+  }
+
+  // ── Controls ───────────────────────────────────────────────────────────
+  document.getElementById('cam-btn').addEventListener('click', async () => {
+    facingMode = facingMode === 'environment' ? 'user' : 'environment';
+    if (running) {
+      cancelAnimationFrame(animId);
+      await startCamera();
+      lastTime = 0; fpsArr = [];
+      animId = requestAnimationFrame(loop);
+    }
+  });
+
+  document.getElementById('start-btn').addEventListener('click', () => {
+    document.getElementById('splash').style.display = 'none';
+    document.getElementById('perm').classList.add('show');
+  });
+
+  document.getElementById('perm-btn').addEventListener('click', async () => {
+    document.getElementById('perm').classList.remove('show');
+    try {
+      await startCamera();
+      running = true;
+      document.getElementById('status-dot').classList.remove('loading');
+      lastTime = performance.now();
+      animId = requestAnimationFrame(loop);
+    } catch (e) {
+      document.getElementById('status-dot').classList.add('error');
+      document.querySelector('#perm p').textContent =
+        'カメラへのアクセスが拒否されました。\nSafari設定→プライバシー→カメラ を確認してください。';
+      document.getElementById('perm').classList.add('show');
+    }
+  });
+
+  window.addEventListener('resize', resizeCanvas);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+
+  loadModel().catch(e => {
+    document.getElementById('splash-msg').textContent = 'モデルの読み込みに失敗しました: ' + e.message;
+    document.getElementById('status-dot').classList.add('error');
+    console.error(e);
+  });
+})();
+</script>
+</body>
+</html>
