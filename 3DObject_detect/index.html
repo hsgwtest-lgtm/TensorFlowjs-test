@@ -457,7 +457,7 @@
   function buildInstance(cat){
     const obj=new ObjClass({locateFile:(f)=>locateBase+f});
     obj.setOptions({modelName:cat,maxNumObjects:3,
-      minDetectionConfidence:0.5,minTrackingConfidence:0.99});
+      minDetectionConfidence:0.5,minTrackingConfidence:0.75});
     obj.onResults((r)=>{lastResults=r;rawSnap=r;});
     return obj;
   }
@@ -557,8 +557,8 @@
       if(!pts) return;
 
       // z-depth for front/back sorting
-      const zFront=(pts[2]?.z||0+pts[3]?.z||0+pts[6]?.z||0+pts[7]?.z||0)/4;
-      const zBack =(pts[1]?.z||0+pts[4]?.z||0+pts[5]?.z||0+pts[8]?.z||0)/4;
+      const zFront=((pts[2]?.z??0)+(pts[3]?.z??0)+(pts[6]?.z??0)+(pts[7]?.z??0))/4;
+      const zBack =((pts[1]?.z??0)+(pts[4]?.z??0)+(pts[5]?.z??0)+(pts[8]?.z??0))/4;
       const frontClose=zFront<=zBack; // smaller z = closer in camera space
 
       ctx.lineCap='round';ctx.lineJoin='round';
@@ -606,7 +606,7 @@
       }
 
       // ── Label ──
-      const conf=det.score!=null?Math.round(det.score*100):null;
+      const conf=(det.score!=null&&!isNaN(det.score))?Math.round(det.score*100):null;
       const ja={Cup:'カップ',Chair:'椅子',Camera:'カメラ',Shoe:'靴'};
       const lbl=(ja[currentCat]||currentCat)+(conf!=null?` ${conf}%`:'');
       if(cp&&cp.x!=null&&!isNaN(cp.x)){
