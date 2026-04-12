@@ -170,7 +170,7 @@
   <div id="topbar">
     <div class="logo">3DOBJ</div>
     <div class="sub">物体検出</div>
-    <div style="font-size:10px;color:#0ff;background:rgba(0,229,255,.15);border:1px solid rgba(0,229,255,.4);border-radius:4px;padding:2px 6px;font-weight:700;flex-shrink:0;">5</div>
+    <div style="font-size:10px;color:#0ff;background:rgba(0,229,255,.15);border:1px solid rgba(0,229,255,.4);border-radius:4px;padding:2px 6px;font-weight:700;flex-shrink:0;">6</div>
     <div class="sp"></div>
     <button id="dbg-btn">DBG</button>
     <button id="cam-btn">⟳</button>
@@ -320,13 +320,16 @@
   }
 
   // ── 2D projection ── prefer keypoints.point2d (native), fallback to manual T+R+S ──
+  // MediaPipe keypoint order: 0=center,1=BBL,2=FBL,3=BTL,4=FTL,5=BBR,6=FBR,7=BTR,8=FTR
+  // BOX_EDGES expects:         0=center,1=BBL,2=FBL,3=FBR,4=BBR,5=BTL,6=FTL,7=FTR,8=BTR
+  const MP_TO_BOX=[0, 1, 2, 6, 5, 3, 4, 8, 7]; // remap MP index → BOX_EDGES index position
   function project3DBox(det, vw, vh, doMirror){
     const kps=det.keypoints;
     const T=det.translation, R=det.rotation, S=det.scale;
 
-    // ── Strategy 1: use MediaPipe’s own point2d (pixel-perfect) ──
+    // ── Strategy 1: use MediaPipe's own point2d (pixel-perfect) ──
     if(kps&&kps.length>=9){
-      const pts=kps.map(kp=>{
+      const raw=kps.map(kp=>{
         const p=kp?.point2d;
         if(!p) return null;
         let nx=p.x??p[0]; let ny=p.y??p[1];
@@ -335,7 +338,12 @@
         if(doMirror) x=vw-x;
         return {x,y,z:T?T[2]:0};
       });
-      if(pts.every(p=>p!==null)) return pts;
+      if(raw.every(p=>p!==null)){
+        // reorder from MediaPipe order to BOX_EDGES order
+        const pts=new Array(9);
+        for(let i=0;i<9;i++) pts[i]=raw[MP_TO_BOX[i]];
+        return pts;
+      }
     }
 
     // ── Strategy 2: manual projection from T+R+S ──
