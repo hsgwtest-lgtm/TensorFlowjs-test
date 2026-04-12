@@ -170,7 +170,7 @@
   <div id="topbar">
     <div class="logo">3DOBJ</div>
     <div class="sub">物体検出</div>
-    <div style="font-size:10px;color:#0ff;background:rgba(0,229,255,.15);border:1px solid rgba(0,229,255,.4);border-radius:4px;padding:2px 6px;font-weight:700;flex-shrink:0;">3</div>
+    <div style="font-size:10px;color:#0ff;background:rgba(0,229,255,.15);border:1px solid rgba(0,229,255,.4);border-radius:4px;padding:2px 6px;font-weight:700;flex-shrink:0;">4</div>
     <div class="sp"></div>
     <button id="dbg-btn">DBG</button>
     <button id="cam-btn">⟳</button>
@@ -319,23 +319,29 @@
     return null;
   }
 
-  // ── 2D projection from MediaPipe keypoints (normalized 0-1) ──────────
-  // MediaPipe Objectron already provides 9 projected 2D keypoints.
-  // keypoints[0]=center, keypoints[1-8]=corners (same order as CORNER_SIGNS)
-  // z is approximated from translation[2] per corner (back-projected depth).
+  // ── 3D → 2D manual projection (T+R+S from MediaPipe) ──────────────────
+  // keypoints[i].x is undefined in this JS build; use translation+rotation+scale.
+  // Use separate focal fx=vw, fy=vh to match MediaPipe’s portrait-mode projection.
   function project3DBox(det, vw, vh, doMirror){
-    const kps=det.keypoints;
-    const T=det.translation;
-    if(!kps||kps.length<9) return null;
+    const T=det.translation, R=det.rotation, S=det.scale;
+    if(!T||!R||!S||T.length<3||R.length<9||S.length<3) return null;
+    const tx=T[0],ty=T[1],tz=T[2];
+    if(tz>=0) return null; // MediaPipe: -Z = in front of camera
 
-    return kps.map((kp,i)=>{
-      if(!kp||kp.x==null||kp.y==null) return {x:null,y:null,z:0};
-      let x=kp.x*vw;
-      let y=kp.y*vh;
+    // fx=vw, fy=vh → MediaPipe normalised-coord back-projection
+    const fx=vw, fy=vh;
+    const ppx=vw/2, ppy=vh/2;
+
+    return CORNER_SIGNS.map(([sx,sy,sz])=>{
+      const ox=sx*S[0]/2, oy=sy*S[1]/2, oz=sz*S[2]/2;
+      const cx3=R[0]*ox+R[1]*oy+R[2]*oz + tx;
+      const cy3=R[3]*ox+R[4]*oy+R[5]*oz + ty;
+      const cz3=R[6]*ox+R[7]*oy+R[8]*oz + tz;
+      if(cz3>=0) return {x:null,y:null,z:cz3};
+      let x=fx*cx3/(-cz3)+ppx;
+      let y=fy*cy3/(-cz3)+ppy;
       if(doMirror) x=vw-x;
-      // use translation z as depth proxy (same for all corners, good enough for sorting)
-      const z=T&&T[2]?T[2]:0;
-      return {x,y,z};
+      return {x,y,z:cz3};
     });
   }
 
@@ -414,6 +420,19 @@
         if(d.translation){
           const T=d.translation;
           h+=`<div><span class="dk">distance(Tz)</span><span class="dv ok">${typeof T[2]==='number'?T[2].toFixed(3)+'m':'?'}</span></div>`;
+        }
+        // ── keypoint structure inspection ──
+        if(d.keypoints&&d.keypoints.length){
+          const kp=d.keypoints[0];
+          const kpType=typeof kp;
+          const kpKeys=kp&&kpType==='object'?Object.keys(kp||{}).join(','):'N/A';
+          h+=`<div class="dh">── keypoints ──</div>`;
+          h+=`<div><span class="dk">kp[0] type</span><span class="dv">${kpType}</span></div>`;
+          h+=`<div><span class="dk">kp[0] keys</span><span class="dv">${kpKeys||'(none)'}</span></div>`;
+          h+=`<div><span class="dk">kp[0].x</span><span class="dv">${kp?.x}</span></div>`;
+          h+=`<div><span class="dk">kp[0].y</span><span class="dv">${kp?.y}</span></div>`;
+          h+=`<div><span class="dk">kp[0][0]</span><span class="dv">${kp?.[0]}</span></div>`;
+          h+=`<div><span class="dk">kp[0][1]</span><span class="dv">${kp?.[1]}</span></div>`;
         }
       }
     }
