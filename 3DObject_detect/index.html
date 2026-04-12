@@ -170,7 +170,7 @@
   <div id="topbar">
     <div class="logo">3DOBJ</div>
     <div class="sub">物体検出</div>
-    <div style="font-size:10px;color:#0ff;background:rgba(0,229,255,.15);border:1px solid rgba(0,229,255,.4);border-radius:4px;padding:2px 6px;font-weight:700;flex-shrink:0;">1</div>
+    <div style="font-size:10px;color:#0ff;background:rgba(0,229,255,.15);border:1px solid rgba(0,229,255,.4);border-radius:4px;padding:2px 6px;font-weight:700;flex-shrink:0;">2</div>
     <div class="sp"></div>
     <button id="dbg-btn">DBG</button>
     <button id="cam-btn">⟳</button>
@@ -326,7 +326,7 @@
     if(!T||!R||!S||T.length<3||R.length<9||S.length<3) return null;
 
     const tx=T[0],ty=T[1],tz=T[2];
-    if(!tz||tz<=0) return null; // behind camera
+    if(tz>=0) return null; // behind camera (MediaPipe: -Z = in front of camera)
 
     // Approximate camera intrinsics (typical phone horizontal FOV ~60-70°)
     const focal=Math.max(vw,vh)*1.1;
@@ -339,9 +339,9 @@
       const cx3=R[0]*ox+R[1]*oy+R[2]*oz + tx;
       const cy3=R[3]*ox+R[4]*oy+R[5]*oz + ty;
       const cz3=R[6]*ox+R[7]*oy+R[8]*oz + tz;
-      if(cz3<=0) return {x:null,y:null,z:cz3};
-      let x=focal*cx3/cz3+ppx;
-      let y=focal*cy3/cz3+ppy;
+      if(cz3>=0) return {x:null,y:null,z:cz3}; // behind camera
+      let x=focal*cx3/(-cz3)+ppx; // -cz3 > 0 (depth positive)
+      let y=focal*cy3/(-cz3)+ppy;
       if(doMirror) x=vw-x;
       return {x,y,z:cz3};
     });
@@ -626,8 +626,8 @@
           el.textContent=v!=null&&!isNaN(v)?(typeof v==='number'?v.toFixed(2):v)+s:'--'+(s||'');
         }
         if(S){sv('v-sw',S[0],'m');sv('v-sh',S[1],'m');sv('v-sd',S[2],'m');}
-        if(T){sv('v-tx',T[0],'');sv('v-ty',T[1],'');sv('v-tz',T[2],'m');}
-        if(T&&T[2]) sv('dist-val',T[2]);
+        if(T){sv('v-tx',T[0],'');sv('v-ty',T[1],'');sv('v-tz',Math.abs(T[2]),'m');}
+        if(T&&T[2]) sv('dist-val',Math.abs(T[2]));
         if(conf!=null) document.getElementById('conf-val').textContent=conf;
         const euler=matToEuler(R);
         sv('v-pitch',euler.pitch,'°');sv('v-yaw',euler.yaw,'°');sv('v-roll',euler.roll,'°');
