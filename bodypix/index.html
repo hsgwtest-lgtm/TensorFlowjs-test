@@ -407,13 +407,13 @@
 
     net = await bodyPix.load({
       architecture: 'MobileNetV1',
-      outputStride:  32,   // 16→32: 推論速度2〜3倍
-      multiplier:    0.50, // 0.75→0.50: モデル軽量化
+      outputStride:  16,   // MobileNetV1 valid: 8 or 16 (32 is ResNet-only)
+      multiplier:    0.50, // 0.75→0.50: 推論負荷削減
       quantBytes:    2,
     });
 
     bar.style.width = '90%';
-    msg.textContent = '準備完了 — BodyPix stride32 × 0.50';
+    msg.textContent = '準備完了 — BodyPix MobileNetV1 ×0.50 stride16';
     await new Promise(r => setTimeout(r, 400));
     bar.style.width = '100%';
     await new Promise(r => setTimeout(r, 150));
