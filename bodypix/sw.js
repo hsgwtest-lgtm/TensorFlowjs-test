@@ -1,4 +1,4 @@
-const CACHE = "bodypix-v2";
+const CACHE = "bodypix-v3";
 const BASE  = "/TensorFlowjs-test/bodypix/";
 const ASSETS = [BASE, BASE + "index.html", BASE + "manifest.json"];
 

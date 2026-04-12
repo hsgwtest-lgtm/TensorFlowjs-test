@@ -353,7 +353,7 @@
 
   // ── State ──────────────────────────────────────────────────────────────
   let net = null, stream = null, animId = null, running = false;
-  let facingMode = 'user', lastTime = 0, fpsArr = [];
+  let facingMode = 'user', fpsArr = [], lastSeg = null;
   let debugMode = false;
   let offCanvas = null, offCtx = null;
 
@@ -383,7 +383,7 @@
     let html = `<div class="dh">─── DEBUG (BodyPix) ───</div>`;
     html += `<div><span class="dk">video</span><span class="dv">${vw}×${vh}</span></div>`;
     html += `<div><span class="dk">camera</span><span class="dv">${facingMode}</span></div>`;
-    html += `<div><span class="dk">flipHorizontal</span><span class="dv">${facingMode === 'user'}</span></div>`;
+    html += `<div><span class="dk">mirror (canvas)</span><span class="dv">${facingMode === 'user'}</span></div>`;
     html += `<div><span class="dk">seg size</span><span class="dv">${seg ? seg.width+'×'+seg.height : '--'}</span></div>`;
     html += `<div><span class="dk">persons (poses)</span><span class="dv">${seg && seg.allPoses ? seg.allPoses.length : '--'}</span></div>`;
     html += `<div><span class="dk">body px / total</span><span class="dv">${bodyPx} / ${total} (${total ? Math.round(bodyPx/total*100) : 0}%)</span></div>`;
@@ -407,13 +407,13 @@
 
     net = await bodyPix.load({
       architecture: 'MobileNetV1',
-      outputStride:  16,
-      multiplier:    0.75,
+      outputStride:  32,   // 16→32: 推論速度2〜3倍
+      multiplier:    0.50, // 0.75→0.50: モデル軽量化
       quantBytes:    2,
     });
 
     bar.style.width = '90%';
-    msg.textContent = '準備完了 — BodyPix MobileNetV1 0.75';
+    msg.textContent = '準備完了 — BodyPix stride32 × 0.50';
     await new Promise(r => setTimeout(r, 400));
     bar.style.width = '100%';
     await new Promise(r => setTimeout(r, 150));
@@ -446,35 +446,44 @@
     offCanvas = null; // force re-create on next frame
   }
 
-  // ── Main loop ──────────────────────────────────────────────────────────
-  async function loop() {
-    if (!running) return;
-
-    const now = performance.now(), dt = now - lastTime;
-    lastTime = now;
-    if (dt > 0) {
-      fpsArr.push(1000 / dt);
-      if (fpsArr.length > 8) fpsArr.shift();
-      document.getElementById('fps-box').textContent =
-        Math.round(fpsArr.reduce((a, b) => a + b) / fpsArr.length) + ' FPS';
+  // ── Inference loop (async, fires as fast as GPU allows) ──────────────
+  async function inferLoop() {
+    while (running) {
+      if (video.readyState < 2) {
+        await new Promise(r => setTimeout(r, 16));
+        continue;
+      }
+      const t0 = performance.now();
+      try {
+        lastSeg = await net.segmentPersonParts(video, {
+          flipHorizontal:        false,  // mirror handled in draw() via ctx.scale
+          internalResolution:    0.4,    // 'medium'(0.5)→0.4 で推論解像度削減
+          segmentationThreshold: 0.65,
+          maxDetections:         1,      // 5→1 人: ポーズNMS演算を大幅削減
+          scoreThreshold:        0.3,
+        });
+      } catch (e) { console.warn('BodyPix inference error:', e); }
+      const dt = performance.now() - t0;
+      if (dt > 0) {
+        fpsArr.push(1000 / dt);
+        if (fpsArr.length > 6) fpsArr.shift();
+        document.getElementById('fps-box').textContent =
+          Math.round(fpsArr.reduce((a, b) => a + b) / fpsArr.length) + ' FPS';
+      }
     }
+  }
 
-    if (video.readyState < 2) { animId = requestAnimationFrame(loop); return; }
+  // ── Render loop (60fps — draws last known seg onto canvas) ────────────
+  function renderLoop() {
+    if (!running) return;
+    draw(lastSeg);
+    animId = requestAnimationFrame(renderLoop);
+  }
 
-    let seg = null;
-    try {
-      seg = await net.segmentPersonParts(video, {
-        flipHorizontal:        facingMode === 'user',
-        internalResolution:   'medium',
-        segmentationThreshold: 0.7,
-        maxDetections:         5,
-        scoreThreshold:        0.3,
-        nmsRadius:             20,
-      });
-    } catch (e) { console.warn('BodyPix inference error:', e); }
-
-    draw(seg);
-    animId = requestAnimationFrame(loop);
+  function startLoops() {
+    lastSeg = null; fpsArr = [];
+    inferLoop();                            // fire-and-forget async
+    animId = requestAnimationFrame(renderLoop);
   }
 
   // ── Draw ───────────────────────────────────────────────────────────────
@@ -545,7 +554,17 @@
 
     // ── Composite onto main canvas (scaled to video resolution) ──────────
     offCtx.putImageData(imgData, 0, 0);
-    ctx.drawImage(offCanvas, 0, 0, vw, vh);
+    if (facingMode === 'user') {
+      // Front camera: segmentation is NOT pre-flipped (flipHorizontal:false),
+      // so mirror it here to align with the CSS scaleX(-1) on the video.
+      ctx.save();
+      ctx.translate(vw, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(offCanvas, 0, 0, vw, vh);
+      ctx.restore();
+    } else {
+      ctx.drawImage(offCanvas, 0, 0, vw, vh);
+    }
 
     badges.classList.add('show');
     infoP.classList.add('show');
@@ -588,10 +607,11 @@
   document.getElementById('cam-btn').addEventListener('click', async () => {
     facingMode = facingMode === 'environment' ? 'user' : 'environment';
     if (running) {
+      running = false;             // stops inferLoop while-loop
       cancelAnimationFrame(animId);
       await startCamera();
-      lastTime = 0; fpsArr = [];
-      animId = requestAnimationFrame(loop);
+      running = true;
+      startLoops();
     }
   });
 
@@ -606,8 +626,7 @@
       await startCamera();
       running = true;
       document.getElementById('status-dot').classList.remove('loading');
-      lastTime = performance.now();
-      animId = requestAnimationFrame(loop);
+      startLoops();
     } catch (e) {
       document.getElementById('status-dot').classList.add('error');
       document.querySelector('#perm p').textContent =
