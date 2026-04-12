@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="ITEM">
+  <meta name="theme-color" content="#0a0a0f">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <title>ITEM — 識別器</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0a0a0f;
+      --safe-t: env(safe-area-inset-top, 0px);
+      --safe-b: env(safe-area-inset-bottom, 0px);
+      --accent: #00bcd4;
+      --accent2: #c084fc;
+    }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg); color: #fff; font-family: 'Helvetica Neue', sans-serif; }
+
+    /* ── Video / Canvas ── */
+    video, canvas {
+      position: fixed; inset: 0;
+      width: 100%; height: 100%;
+      object-fit: cover;
+    }
+    video { z-index: 1; }
+    video.mirror { transform: scaleX(-1); }
+    canvas { z-index: 2; pointer-events: none; }
+
+    /* ── Topbar ── */
+    #topbar {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 30;
+      padding: calc(var(--safe-t) + 6px) 14px 6px;
+      display: flex; align-items: center; gap: 8px;
+      background: linear-gradient(rgba(10,10,15,.85), transparent);
+    }
+    .logo { font-size: 15px; font-weight: 700; letter-spacing: 4px; color: #fff; }
+    .sub  { font-size: 10px; color: rgba(255,255,255,.4); letter-spacing: 2px; margin-left: -4px; }
+    .spacer { flex: 1; }
+    #cam-btn {
+      background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2);
+      color: #fff; font-size: 16px; padding: 4px 10px; cursor: pointer; border-radius: 6px; line-height: 1;
+    }
+    #dbg-btn {
+      background: rgba(255,255,255,.08); border: 1px solid rgba(0,188,212,.4);
+      color: rgba(0,188,212,.8); font-size: 10px; padding: 4px 8px; cursor: pointer;
+      border-radius: 6px; letter-spacing: 1px;
+    }
+    #dbg-btn.active { background: rgba(0,188,212,.2); color: #0ff; border-color: #0ff; }
+    #train-btn {
+      background: rgba(255,255,255,.08); border: 1px solid rgba(192,132,252,.4);
+      color: rgba(192,132,252,.8); font-size: 10px; padding: 4px 8px; cursor: pointer;
+      border-radius: 6px; letter-spacing: 1px;
+    }
+    #train-btn.active { background: rgba(192,132,252,.2); color: #c084fc; border-color: #c084fc; }
+    #fps-box {
+      font-size: 11px; color: rgba(255,255,255,.6); padding: 3px 8px;
+      border: 1px solid rgba(255,255,255,.15); border-radius: 4px;
+      font-family: 'Courier New', monospace; letter-spacing: 1px;
+    }
+    #status-dot { width: 8px; height: 8px; border-radius: 50%;
+      background: #00e676; box-shadow: 0 0 6px #00e676; animation: blink 1.5s infinite; }
+    #status-dot.loading { background: #ffb800; box-shadow: 0 0 6px #ffb800; }
+    #status-dot.error   { background: #ff3a3a; box-shadow: 0 0 6px #ff3a3a; animation: none; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    /* ── Debug panel ── */
+    #debug-panel {
+      display: none; position: fixed; bottom: 130px; left: 8px; right: 8px; z-index: 30;
+      background: rgba(0,0,0,.93); border: 1px solid rgba(0,188,212,.6); border-radius: 8px;
+      padding: 10px 12px; font-family: 'Courier New', monospace; font-size: 10.5px;
+      color: #0ff; line-height: 1.7; max-height: 220px; overflow-y: auto;
+    }
+    #debug-panel.show { display: block; }
+    #debug-panel .dk { color: rgba(255,255,255,.4); display: inline-block; min-width: 160px; }
+    #debug-panel .dv { color: #fff; }
+    #debug-panel .dh { color: #ffb800; font-weight: bold; margin-bottom: 2px; }
+
+    /* ── Left badges ── */
+    #badges {
+      position: fixed; top: calc(var(--safe-t) + 52px); left: 12px; z-index: 20;
+      display: none; flex-direction: column; gap: 8px;
+    }
+    #badges.show { display: flex; }
+    .badge {
+      width: 76px; height: 68px;
+      background: rgba(0,188,212,.18); border: 1.5px solid rgba(0,188,212,.65);
+      clip-path: polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+    }
+    .badge .bval { font-size: 17px; font-weight: 700; color: #fff; line-height: 1; }
+    .badge .blbl { font-size: 9px; color: rgba(0,188,212,.9); letter-spacing: 1px; margin-top: 2px; }
+
+    /* ── Info panel (right side) ── */
+    #info-panel {
+      position: fixed; top: 50%; right: 10px; z-index: 20; transform: translateY(-50%);
+      display: none; flex-direction: column; gap: 4px;
+      max-height: 60vh; overflow-y: auto;
+    }
+    #info-panel.show { display: flex; }
+    .class-row {
+      display: flex; align-items: center; gap: 6px;
+      background: rgba(10,10,15,.75); border: 1px solid rgba(255,255,255,.1);
+      border-radius: 6px; padding: 5px 8px; font-size: 11px;
+      color: rgba(255,255,255,.4); white-space: nowrap;
+      transition: border-color .2s, background .2s, color .2s, box-shadow .2s;
+      min-width: 130px;
+    }
+    .class-row.predicted {
+      background: rgba(10,10,15,.92); color: #fff;
+      border-color: rgba(192,132,252,.7);
+      box-shadow: 0 0 10px rgba(192,132,252,.3);
+    }
+    .class-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
+      opacity: 0.25; transition: opacity .2s, box-shadow .2s; }
+    .class-row.predicted .class-dot { opacity: 1; }
+    .class-label { flex: 1; }
+    .class-samps { font-family: 'Courier New', monospace; font-size: 9px;
+      min-width: 26px; text-align: right; opacity: 0.5; }
+    .class-conf  { font-family: 'Courier New', monospace; font-size: 9px;
+      min-width: 34px; text-align: right; color: rgba(192,132,252,.9); }
+
+    /* ── Bottom bar ── */
+    #bottom {
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 20;
+      padding: 10px 14px calc(var(--safe-b) + 12px);
+      background: linear-gradient(transparent, rgba(10,10,15,.9));
+      display: none; flex-direction: column; align-items: center; gap: 4px;
+    }
+    #bottom.show { display: flex; }
+    #pred-hint { font-size: 11px; color: rgba(255,255,255,.4); letter-spacing: 1px; text-align: center; }
+    #pred-label { font-size: 18px; font-weight: 700; text-align: center; transition: color .2s; }
+    #pred-conf  { font-size: 12px; color: rgba(192,132,252,.8); font-family: 'Courier New', monospace; text-align: center; }
+
+    /* ── Training panel (slide-up from bottom) ── */
+    #train-panel {
+      display: none; position: fixed; bottom: 0; left: 0; right: 0; z-index: 25;
+      max-height: 60vh; overflow-y: auto;
+      background: rgba(8,8,12,.98); border-top: 1px solid rgba(255,255,255,.12);
+      padding: 8px 14px calc(var(--safe-b) + 10px);
+    }
+    #train-panel.show { display: block; }
+    #train-panel .panel-grip {
+      width: 36px; height: 3px; background: rgba(255,255,255,.2); border-radius: 2px;
+      margin: 0 auto 10px;
+    }
+    #train-panel h3 {
+      font-size: 10px; color: rgba(255,255,255,.35); letter-spacing: 2px;
+      margin-bottom: 10px; text-transform: uppercase;
+    }
+    .add-row { display: flex; gap: 8px; margin-bottom: 12px; }
+    .add-row input {
+      flex: 1; background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.18);
+      color: #fff; font-size: 14px; padding: 8px 12px; border-radius: 6px; outline: none;
+      font-family: inherit;
+      -webkit-appearance: none;
+    }
+    .add-row input:focus { border-color: rgba(0,188,212,.55); }
+    .add-row input::placeholder { color: rgba(255,255,255,.22); }
+    #add-btn {
+      background: rgba(0,188,212,.18); border: 1px solid rgba(0,188,212,.45);
+      color: #0ff; font-size: 12px; padding: 0 14px; cursor: pointer;
+      border-radius: 6px; letter-spacing: 1px; white-space: nowrap; font-family: inherit;
+      flex-shrink: 0;
+    }
+    #add-btn:active { background: rgba(0,188,212,.38); }
+
+    #class-list { display: flex; flex-direction: column; gap: 6px; }
+    .train-row {
+      display: flex; align-items: center; gap: 8px;
+      background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.09);
+      border-radius: 8px; padding: 9px 10px;
+    }
+    .train-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+    .train-name { flex: 1; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .train-cnt {
+      font-size: 11px; color: rgba(255,255,255,.35);
+      font-family: 'Courier New', monospace; white-space: nowrap; flex-shrink: 0;
+    }
+    .cap-btn {
+      background: rgba(192,132,252,.18); border: 1px solid rgba(192,132,252,.45);
+      color: #c084fc; font-size: 11px; padding: 6px 10px; cursor: pointer;
+      border-radius: 6px; font-family: inherit; flex-shrink: 0; line-height: 1;
+    }
+    .cap-btn:active { background: rgba(192,132,252,.45); }
+    .del-btn {
+      background: rgba(255,58,58,.08); border: 1px solid rgba(255,58,58,.25);
+      color: rgba(255,80,80,.65); font-size: 14px; padding: 4px 9px; cursor: pointer;
+      border-radius: 6px; line-height: 1; flex-shrink: 0;
+    }
+    .del-btn:active { background: rgba(255,58,58,.28); }
+
+    .train-footer {
+      display: flex; justify-content: flex-end; margin-top: 10px;
+      padding-top: 8px; border-top: 1px solid rgba(255,255,255,.07);
+    }
+    #clear-btn {
+      background: rgba(255,58,58,.08); border: 1px solid rgba(255,58,58,.25);
+      color: rgba(255,80,80,.65); font-size: 11px; padding: 7px 16px; cursor: pointer;
+      border-radius: 6px; letter-spacing: 1px; font-family: inherit;
+    }
+    #clear-btn:active { background: rgba(255,58,58,.28); }
+
+    /* ── Splash ── */
+    #splash { position: fixed; inset: 0; z-index: 100; background: var(--bg);
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 40px; }
+    #splash h1 { font-size: 28px; letter-spacing: 8px; color: #fff; font-weight: 300; }
+    #splash p  { font-size: 12px; letter-spacing: 2px; color: rgba(255,255,255,.4); text-align: center; line-height: 1.8; }
+    #prog-wrap { width: 200px; height: 2px; background: rgba(255,255,255,.1); }
+    #prog-bar  { height: 100%; width: 0%; background: #c084fc; transition: width .3s; }
+    #splash-msg { font-size: 11px; color: rgba(255,255,255,.45); letter-spacing: 2px; }
+    #start-btn {
+      display: none; padding: 12px 36px; border: 1px solid rgba(255,255,255,.3);
+      background: rgba(255,255,255,.06); color: #fff; font-size: 13px; letter-spacing: 4px;
+      cursor: pointer; border-radius: 4px; font-family: inherit;
+    }
+    #start-btn.show { display: block; }
+    .item-icon { font-size: 48px; filter: drop-shadow(0 0 16px rgba(192,132,252,.5)); }
+
+    /* ── Permission ── */
+    #perm {
+      display: none; position: fixed; inset: 0; z-index: 101; background: var(--bg);
+      flex-direction: column; align-items: center; justify-content: center; gap: 22px;
+      padding: 40px; text-align: center;
+    }
+    #perm.show { display: flex; }
+    #perm .icon { font-size: 50px; }
+    #perm p { font-size: 13px; color: rgba(255,255,255,.6); line-height: 1.8; }
+    #perm-btn {
+      padding: 13px 38px; border: 1px solid rgba(255,255,255,.3);
+      background: rgba(255,255,255,.08); color: #fff; font-family: inherit;
+      font-size: 13px; letter-spacing: 3px; cursor: pointer; border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+
+<video id="video" autoplay playsinline muted webkit-playsinline></video>
+<canvas id="canvas"></canvas>
+
+<div id="topbar">
+  <div class="logo">ITEM</div><div class="sub">識別器</div>
+  <div class="spacer"></div>
+  <button id="train-btn">学習</button>
+  <button id="dbg-btn">DBG</button>
+  <button id="cam-btn">⟳</button>
+  <div id="fps-box">-- FPS</div>
+  <div id="status-dot" class="loading"></div>
+</div>
+
+<div id="debug-panel"></div>
+
+<div id="badges">
+  <div class="badge">
+    <div class="bval" id="badge-classes">0</div>
+    <div class="blbl">クラス</div>
+  </div>
+  <div class="badge">
+    <div class="bval" id="badge-samples">0</div>
+    <div class="blbl">学習数</div>
+  </div>
+</div>
+
+<div id="info-panel"></div>
+
+<div id="bottom">
+  <div id="pred-hint">クラスを学習させてください</div>
+  <div id="pred-label">--</div>
+  <div id="pred-conf"></div>
+</div>
+
+<div id="train-panel">
+  <div class="panel-grip"></div>
+  <h3>クラス管理</h3>
+  <div class="add-row">
+    <input id="class-input" type="text" inputmode="text"
+      placeholder="クラス名を入力..." autocomplete="off" autocorrect="off" spellcheck="false">
+    <button id="add-btn">追加</button>
+  </div>
+  <div id="class-list"></div>
+  <div class="train-footer">
+    <button id="clear-btn">全クリア</button>
+  </div>
+</div>
+
+<div id="splash">
+  <div class="item-icon">🔍</div>
+  <h1>ITEM</h1>
+  <p>個人用アイテム識別器<br>TensorFlow.js MobileNet + KNN</p>
+  <div id="prog-wrap"><div id="prog-bar"></div></div>
+  <div id="splash-msg">モデルを読み込み中…</div>
+  <button id="start-btn">▶ カメラ起動</button>
+</div>
+
+<div id="perm">
+  <div class="icon">📷</div>
+  <p>カメラへのアクセスが必要です<br>次の画面で「許可」を選択してください</p>
+  <button id="perm-btn">アクセスを許可</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.0/dist/mobilenet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/knn-classifier@1.2.4/dist/knn-classifier.min.js"></script>
+<script>
+(function () {
+'use strict';
+
+/* ══════════════════════════════════════════════════════════════════════
+   PersonalItem Classifier
+   MobileNetV1 (alpha 0.5) features → KNN classifier (on-device training)
+   ══════════════════════════════════════════════════════════════════════ */
+
+const PALETTE = [
+  '#ff6b6b','#4a9eff','#00e676','#ffb800','#c084fc','#00e5ff',
+  '#ff4081','#69f0ae','#ffd740','#40c4ff','#ea80fc','#ff6e40',
+  '#a5d6a7','#ef9a9a','#80cbc4','#ffcc02',
+];
+
+// ── State ──────────────────────────────────────────────────────────────
+let mobileNet  = null;   // mobilenet model
+let classifier = null;   // knnClassifier instance
+let stream     = null, animId = null, running = false;
+let facingMode = 'user', fpsArr = [], lastResult = null;
+let debugMode  = false, trainPanelOpen = false;
+
+// classMap: label (string) → { color: string, count: number, idx: number }
+let classMap = {};
+let classIdxSeq = 0; // ever-incrementing for stable DOM keys
+
+const video   = document.getElementById('video');
+const canvas  = document.getElementById('canvas');
+const ctx     = canvas.getContext('2d');
+const dbgEl   = document.getElementById('debug-panel');
+
+// ── Helpers ─────────────────────────────────────────────────────────────
+function domKey(idx) { return 'c' + idx; } // safe DOM id prefix
+
+function nextColor() {
+  const used = new Set(Object.values(classMap).map(c => c.color));
+  return PALETTE.find(c => !used.has(c)) || PALETTE[Object.keys(classMap).length % PALETTE.length];
+}
+
+function totalSamples() {
+  return Object.values(classMap).reduce((s, c) => s + c.count, 0);
+}
+
+function updateBadges() {
+  const n = Object.keys(classMap).length;
+  document.getElementById('badge-classes').textContent = n;
+  document.getElementById('badge-samples').textContent = totalSamples();
+  document.getElementById('badges').classList.toggle('show', running && (n > 0));
+}
+
+// ── Info panel (right side — rebuilt on class list change) ───────────────
+function buildInfoPanel() {
+  const panel = document.getElementById('info-panel');
+  panel.innerHTML = '';
+  const labels = Object.keys(classMap);
+  if (!labels.length) { panel.classList.remove('show'); return; }
+  labels.forEach(label => {
+    const { color, count, idx } = classMap[label];
+    const key = domKey(idx);
+    const row = document.createElement('div');
+    row.className = 'class-row';
+    row.dataset.key = key;
+    row.innerHTML =
+      `<div class="class-dot" style="background:${color};box-shadow:0 0 5px ${color}"></div>` +
+      `<span class="class-label">${escHtml(label)}</span>` +
+      `<span class="class-samps" data-samps="${key}">${count}枚</span>` +
+      `<span class="class-conf" data-conf="${key}">--</span>`;
+    panel.appendChild(row);
+  });
+  panel.classList.toggle('show', running && labels.length > 0);
+}
+
+// ── Training panel (rebuilt on class list change) ────────────────────────
+function buildTrainList() {
+  const list = document.getElementById('class-list');
+  list.innerHTML = '';
+  Object.entries(classMap).forEach(([label, { color, count, idx }]) => {
+    const key = domKey(idx);
+    const row = document.createElement('div');
+    row.className = 'train-row';
+    row.innerHTML =
+      `<div class="train-dot" style="background:${color}"></div>` +
+      `<span class="train-name" title="${escHtml(label)}">${escHtml(label)}</span>` +
+      `<span class="train-cnt" data-tcnt="${key}">${count}枚</span>` +
+      `<button class="cap-btn" data-lbl="${escHtml(label)}">📸 学習</button>` +
+      `<button class="del-btn" data-lbl="${escHtml(label)}" aria-label="削除">×</button>`;
+    list.appendChild(row);
+  });
+  list.querySelectorAll('.cap-btn').forEach(btn =>
+    btn.addEventListener('click', () => captureFrame(btn.dataset.lbl)));
+  list.querySelectorAll('.del-btn').forEach(btn =>
+    btn.addEventListener('click', () => deleteClass(btn.dataset.lbl)));
+}
+
+// Update sample counts without rebuilding
+function refreshCounts(label) {
+  const { count, idx } = classMap[label];
+  const key = domKey(idx);
+  document.querySelectorAll(`[data-samps="${key}"]`).forEach(el => { el.textContent = count + '枚'; });
+  document.querySelectorAll(`[data-tcnt="${key}"]`).forEach(el => { el.textContent = count + '枚'; });
+  updateBadges();
+}
+
+// Update confidence / predicted highlighting
+function refreshPrediction(result) {
+  const predictedKey = (result && classMap[result.label]) ? domKey(classMap[result.label].idx) : null;
+  document.querySelectorAll('.class-row').forEach(row => {
+    const isPred = row.dataset.key === predictedKey;
+    row.classList.toggle('predicted', isPred);
+  });
+  document.querySelectorAll('[data-conf]').forEach(el => {
+    if (!result) { el.textContent = '--'; return; }
+    // find label whose key matches
+    const match = Object.entries(classMap).find(([, v]) => domKey(v.idx) === el.dataset.conf);
+    if (!match) { el.textContent = '--'; return; }
+    const conf = result.confidences[match[0]] || 0;
+    el.textContent = Math.round(conf * 100) + '%';
+  });
+}
+
+// ── Class management ────────────────────────────────────────────────────
+function addClass(label) {
+  label = label.trim();
+  if (!label || classMap[label]) return;
+  classMap[label] = { color: nextColor(), count: 0, idx: classIdxSeq++ };
+  buildInfoPanel();
+  buildTrainList();
+  updateBadges();
+}
+
+function deleteClass(label) {
+  if (!classMap[label]) return;
+  try { if (classifier) classifier.clearClass(label); } catch (_) {}
+  delete classMap[label];
+  lastResult = null;
+  buildInfoPanel();
+  buildTrainList();
+  updateBadges();
+  renderBottomBar(null);
+}
+
+function clearAll() {
+  if (!Object.keys(classMap).length) return;
+  if (!confirm('全クラスと学習データをリセットしますか?')) return;
+  try { if (classifier) classifier.clearAllClasses(); } catch (_) {}
+  classMap = {};
+  lastResult = null;
+  buildInfoPanel();
+  buildTrainList();
+  updateBadges();
+  renderBottomBar(null);
+}
+
+// ── Capture training sample ──────────────────────────────────────────────
+async function captureFrame(label) {
+  if (!mobileNet || !classifier || !classMap[label]) return;
+  if (video.readyState < 2) return;
+  let activation;
+  try {
+    activation = mobileNet.infer(video, true);
+    classifier.addExample(activation, label);
+    classMap[label].count++;
+    refreshCounts(label);
+  } catch (e) {
+    console.warn('capture error:', e);
+  } finally {
+    if (activation) activation.dispose();
+  }
+}
+
+// ── Bottom bar update ────────────────────────────────────────────────────
+function renderBottomBar(result) {
+  const hintEl  = document.getElementById('pred-hint');
+  const labelEl = document.getElementById('pred-label');
+  const confEl  = document.getElementById('pred-conf');
+  const n = Object.keys(classMap).length;
+
+  if (!running) { return; }
+
+  document.getElementById('bottom').classList.add('show');
+
+  if (n === 0) {
+    hintEl.textContent  = '「学習」ボタンからクラスを追加してください';
+    labelEl.textContent = '';
+    labelEl.style.color = '';
+    confEl.textContent  = '';
+    return;
+  }
+  if (n === 1) {
+    hintEl.textContent  = 'あと1クラス追加すると識別を開始します';
+    labelEl.textContent = '';
+    labelEl.style.color = '';
+    confEl.textContent  = '';
+    return;
+  }
+  const canPredict = classifier && classifier.getNumClasses() >= 2;
+  if (!canPredict) {
+    hintEl.textContent  = '各クラスに1枚以上学習させてください';
+    labelEl.textContent = '';
+    labelEl.style.color = '';
+    confEl.textContent  = '';
+    return;
+  }
+  if (!result) {
+    hintEl.textContent  = '';
+    labelEl.textContent = '識別中…';
+    labelEl.style.color = 'rgba(255,255,255,.4)';
+    confEl.textContent  = '';
+    return;
+  }
+  const conf  = result.confidences[result.label] || 0;
+  const color = classMap[result.label] ? classMap[result.label].color : '#fff';
+  hintEl.textContent  = '予測結果';
+  labelEl.textContent = result.label;
+  labelEl.style.color  = color;
+  confEl.textContent  = Math.round(conf * 100) + '%';
+}
+
+// ── Debug panel ──────────────────────────────────────────────────────────
+function updateDebug() {
+  if (!debugMode) return;
+  const n   = Object.keys(classMap).length;
+  const tot = totalSamples();
+  const res = lastResult;
+  let html = `<div class="dh">─── DEBUG (Item Classifier) ───</div>`;
+  html += `<div><span class="dk">カメラ</span><span class="dv">${facingMode}</span></div>`;
+  html += `<div><span class="dk">クラス数</span><span class="dv">${n}</span></div>`;
+  html += `<div><span class="dk">総学習枚数</span><span class="dv">${tot}</span></div>`;
+  html += `<div><span class="dk">分類器クラス数</span><span class="dv">${classifier ? classifier.getNumClasses() : '--'}</span></div>`;
+  html += `<div><span class="dk">最近の予測</span><span class="dv">${res ? res.label : '--'}</span></div>`;
+  html += `<div><span class="dk">確信度</span><span class="dv">${res ? Math.round((res.confidences[res.label] || 0) * 100) + '%' : '--'}</span></div>`;
+  html += `<div><span class="dk">backend</span><span class="dv">${tf.getBackend()}</span></div>`;
+  dbgEl.innerHTML = html;
+}
+
+// ── Load models ───────────────────────────────────────────────────────────
+async function loadModel() {
+  const bar = document.getElementById('prog-bar');
+  const msg = document.getElementById('splash-msg');
+
+  bar.style.width = '10%';
+  msg.textContent = 'TF.js WebGL 初期化中…';
+  await tf.setBackend('webgl');
+  await tf.ready();
+
+  bar.style.width = '30%';
+  msg.textContent = 'MobileNet 読み込み中…';
+  mobileNet = await mobilenet.load({ version: 1, alpha: 0.5 });
+
+  bar.style.width = '80%';
+  msg.textContent = 'KNN 分類器 初期化中…';
+  classifier = knnClassifier.create();
+
+  bar.style.width = '95%';
+  msg.textContent = '準備完了';
+  await new Promise(r => setTimeout(r, 400));
+  bar.style.width = '100%';
+  await new Promise(r => setTimeout(r, 150));
+  document.getElementById('start-btn').classList.add('show');
+  msg.textContent = 'タップして開始';
+}
+
+// ── Camera ────────────────────────────────────────────────────────────────
+async function startCamera() {
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: { ideal: facingMode }, width: { ideal: 1280 }, height: { ideal: 720 } },
+    audio: false,
+  });
+  video.srcObject = stream;
+  await new Promise(r => { video.onloadedmetadata = r; });
+  await new Promise(r => {
+    if (video.readyState >= 2) { r(); return; }
+    video.oncanplay = r;
+  });
+  video.play();
+  resizeCanvas();
+  video.classList.toggle('mirror', facingMode === 'user');
+}
+
+function resizeCanvas() {
+  canvas.width  = video.videoWidth  || window.innerWidth;
+  canvas.height = video.videoHeight || window.innerHeight;
+}
+
+// ── Inference loop ────────────────────────────────────────────────────────
+async function inferLoop() {
+  while (running) {
+    const canPredict = classifier && classifier.getNumClasses() >= 2
+                     && video.readyState >= 2;
+    if (!canPredict) {
+      if (lastResult !== null) { lastResult = null; renderBottomBar(null); refreshPrediction(null); }
+      await new Promise(r => setTimeout(r, 120));
+      continue;
+    }
+    const t0 = performance.now();
+    let activation;
+    try {
+      activation = mobileNet.infer(video, true);
+      const result = await classifier.predictClass(activation);
+      lastResult = result;
+    } catch (e) {
+      console.warn('infer error:', e);
+    } finally {
+      if (activation) activation.dispose();
+    }
+    const dt = performance.now() - t0;
+    fpsArr.push(1000 / Math.max(dt, 1));
+    if (fpsArr.length > 6) fpsArr.shift();
+    document.getElementById('fps-box').textContent =
+      Math.round(fpsArr.reduce((a, b) => a + b) / fpsArr.length) + ' FPS';
+  }
+}
+
+// ── Render loop ───────────────────────────────────────────────────────────
+function renderLoop() {
+  if (!running) return;
+  draw();
+  animId = requestAnimationFrame(renderLoop);
+}
+
+function startLoops() {
+  lastResult = null; fpsArr = [];
+  inferLoop();
+  animId = requestAnimationFrame(renderLoop);
+}
+
+// ── Draw ──────────────────────────────────────────────────────────────────
+function draw() {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh) return;
+  if (canvas.width !== vw || canvas.height !== vh) resizeCanvas();
+  ctx.clearRect(0, 0, vw, vh);
+
+  updateDebug();
+  renderBottomBar(lastResult);
+  refreshPrediction(lastResult);
+
+  // Draw a subtle colored border when prediction is confident
+  const result = lastResult;
+  if (result && classMap[result.label]) {
+    const conf = result.confidences[result.label] || 0;
+    if (conf > 0.65) {
+      const color = classMap[result.label].color;
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth   = 5;
+      ctx.globalAlpha = Math.min(1, (conf - 0.65) / 0.25) * 0.75;
+      ctx.shadowColor = color;
+      ctx.shadowBlur  = 18;
+      ctx.strokeRect(3, 3, vw - 6, vh - 6);
+      ctx.restore();
+    }
+  }
+}
+
+// ── UI events ─────────────────────────────────────────────────────────────
+document.getElementById('dbg-btn').addEventListener('click', () => {
+  debugMode = !debugMode;
+  dbgEl.classList.toggle('show', debugMode);
+  document.getElementById('dbg-btn').classList.toggle('active', debugMode);
+});
+
+document.getElementById('train-btn').addEventListener('click', () => {
+  trainPanelOpen = !trainPanelOpen;
+  document.getElementById('train-panel').classList.toggle('show', trainPanelOpen);
+  document.getElementById('train-btn').classList.toggle('active', trainPanelOpen);
+});
+
+document.getElementById('cam-btn').addEventListener('click', async () => {
+  facingMode = facingMode === 'user' ? 'environment' : 'user';
+  try { await startCamera(); } catch (e) { console.warn('cam flip err:', e); }
+});
+
+document.getElementById('add-btn').addEventListener('click', () => {
+  const inp = document.getElementById('class-input');
+  addClass(inp.value);
+  inp.value = '';
+  inp.focus();
+});
+
+document.getElementById('class-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    const inp = document.getElementById('class-input');
+    addClass(inp.value);
+    inp.value = '';
+  }
+});
+
+document.getElementById('clear-btn').addEventListener('click', clearAll);
+
+// ── Splash & permission flow ───────────────────────────────────────────────
+document.getElementById('start-btn').addEventListener('click', async () => {
+  document.getElementById('splash').style.display = 'none';
+  const hasPerm = await checkCameraPermission();
+  if (!hasPerm) {
+    document.getElementById('perm').classList.add('show');
+    return;
+  }
+  await beginCamera();
+});
+
+document.getElementById('perm-btn').addEventListener('click', async () => {
+  document.getElementById('perm').classList.remove('show');
+  await beginCamera();
+});
+
+async function checkCameraPermission() {
+  try {
+    if (!navigator.permissions) return true;
+    const p = await navigator.permissions.query({ name: 'camera' });
+    return p.state === 'granted';
+  } catch (_) { return true; }
+}
+
+async function beginCamera() {
+  try {
+    await startCamera();
+  } catch (e) {
+    document.getElementById('perm').classList.add('show');
+    return;
+  }
+  running = true;
+  document.getElementById('status-dot').classList.remove('loading');
+  updateBadges();
+  buildInfoPanel();
+  renderBottomBar(null);
+  startLoops();
+}
+
+// ── XSS guard ─────────────────────────────────────────────────────────────
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────
+loadModel().catch(e => {
+  document.getElementById('status-dot').className = 'error';
+  document.getElementById('splash-msg').textContent = 'モデル読み込み失敗: ' + e.message;
+  console.error(e);
+});
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(console.warn);
+}
+
+})();
+</script>
+</body>
+</html>

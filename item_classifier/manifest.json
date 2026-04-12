@@ -1,0 +1,16 @@
+{
+  "name": "ITEM — 個人用アイテム識別器",
+  "short_name": "ITEM",
+  "description": "オンデバイス学習でアイテムを識別するPWAアプリ (TensorFlow.js MobileNet + KNN)",
+  "start_url": "/TensorFlowjs-test/item_classifier/",
+  "scope": "/TensorFlowjs-test/item_classifier/",
+  "id": "/TensorFlowjs-test/item_classifier/",
+  "display": "standalone",
+  "background_color": "#0a0a0f",
+  "theme_color": "#0a0a0f",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
