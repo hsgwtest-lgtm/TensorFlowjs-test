@@ -1,216 +1,195 @@
 <!DOCTYPE html>
+
 <html lang="ja">
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
   <title>3DOBJ — 物体3D検出</title>
-
   <link rel="manifest" href="manifest.json"/>
   <meta name="theme-color" content="#0a0a0f"/>
   <meta name="apple-mobile-web-app-capable" content="yes"/>
   <meta name="apple-mobile-web-app-status-bar-style" content="black"/>
   <meta name="apple-mobile-web-app-title" content="3DOBJ"/>
   <link rel="apple-touch-icon" href="icon-192.png"/>
-
   <style>
     :root{
-      --bg:#0a0a0f; --front:#00e5ff; --back:#4a9eff; --side:#00e676;
-      --center:#ffb800; --axis-x:#ff6b6b; --axis-y:#00e676; --axis-z:#4a9eff;
-      --label:#c084fc;
-      --safe-t:env(safe-area-inset-top,0px);
-      --safe-b:env(safe-area-inset-bottom,0px);
+      --bg:#0a0a0f;--front:#00e5ff;--back:#4a9eff;--side:#00e676;
+      --center:#ffb800;--ax:#ff6b6b;--ay:#00e676;--az:#4a9eff;--lbl:#c084fc;
+      --safe-t:env(safe-area-inset-top,0px);--safe-b:env(safe-area-inset-bottom,0px);
     }
     *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
     html,body{width:100%;height:100dvh;overflow:hidden;background:var(--bg);
       font-family:'Helvetica Neue','Hiragino Sans',sans-serif;}
-
     #video{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .5s;}
     #video.ready{opacity:1;}
     #video.mirror{transform:scaleX(-1);}
     #canvas{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:5;}
 
-    /* ── Topbar (row 1) ── */
-    #topbar{
-      position:fixed;top:0;left:0;right:0;z-index:20;
-      padding:calc(var(--safe-t)+6px) 12px 6px;
-      display:flex;align-items:center;gap:6px;
-      background:linear-gradient(rgba(10,10,15,.92),transparent);
-      min-height:calc(var(--safe-t)+44px);
-    }
-    .logo{font-size:14px;font-weight:700;letter-spacing:3px;color:#fff;flex-shrink:0;}
-    .sub{font-size:9px;color:rgba(255,255,255,.4);letter-spacing:1px;margin-left:-4px;flex-shrink:0;}
-    .spacer{flex:1;}
-    #cam-btn{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);
-      color:#fff;font-size:15px;padding:4px 9px;cursor:pointer;border-radius:6px;line-height:1;flex-shrink:0;}
-    #dbg-btn{background:rgba(255,255,255,.08);border:1px solid rgba(0,188,212,.5);
-      color:rgba(0,188,212,.9);font-size:10px;padding:4px 9px;cursor:pointer;
-      border-radius:6px;letter-spacing:1px;flex-shrink:0;}
-    #dbg-btn.active{background:rgba(0,188,212,.25);color:#0ff;border-color:#0ff;}
-    #fps-box{font-size:11px;color:rgba(255,255,255,.6);padding:3px 7px;
-      border:1px solid rgba(255,255,255,.15);border-radius:4px;
-      font-family:'Courier New',monospace;letter-spacing:1px;flex-shrink:0;}
-    #status-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;
-      background:#00e676;box-shadow:0 0 6px #00e676;animation:blink 1.5s infinite;}
-    #status-dot.loading{background:#ffb800;box-shadow:0 0 6px #ffb800;}
-    #status-dot.error{background:#ff3a3a;box-shadow:0 0 6px #ff3a3a;animation:none;}
-    @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+```
+/* ══ 2-row header (single container) ══ */
+#header{
+  position:fixed;top:0;left:0;right:0;z-index:20;
+  background:linear-gradient(rgba(10,10,15,.94),transparent);
+  padding-top:var(--safe-t);
+}
+/* row 1 */
+#topbar{display:flex;align-items:center;gap:6px;padding:6px 12px 4px;}
+.logo{font-size:14px;font-weight:700;letter-spacing:3px;color:#fff;flex-shrink:0;}
+.sub{font-size:9px;color:rgba(255,255,255,.4);letter-spacing:1px;margin-left:-4px;flex-shrink:0;}
+.sp{flex:1;}
+#dbg-btn{background:rgba(255,255,255,.08);border:1px solid rgba(0,188,212,.5);
+  color:rgba(0,188,212,.9);font-size:10px;padding:4px 9px;cursor:pointer;
+  border-radius:6px;letter-spacing:1px;flex-shrink:0;}
+#dbg-btn.active{background:rgba(0,188,212,.25);color:#0ff;border-color:#0ff;}
+#cam-btn{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);
+  color:#fff;font-size:15px;padding:4px 9px;cursor:pointer;border-radius:6px;line-height:1;flex-shrink:0;}
+#fps-box{font-size:11px;color:rgba(255,255,255,.6);padding:3px 7px;
+  border:1px solid rgba(255,255,255,.15);border-radius:4px;
+  font-family:'Courier New',monospace;flex-shrink:0;}
+#status-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;
+  background:#00e676;box-shadow:0 0 6px #00e676;animation:blink 1.5s infinite;}
+#status-dot.loading{background:#ffb800;box-shadow:0 0 6px #ffb800;}
+#status-dot.error{background:#ff3a3a;box-shadow:0 0 6px #ff3a3a;animation:none;}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+/* row 2 — category buttons */
+#cat-bar{display:flex;justify-content:center;gap:6px;padding:2px 10px 6px;}
+.cat-btn{padding:4px 12px;border-radius:20px;font-size:11px;cursor:pointer;
+  border:1px solid rgba(255,255,255,.22);background:rgba(10,10,15,.8);
+  color:rgba(255,255,255,.65);transition:all .2s;white-space:nowrap;}
+.cat-btn.active{background:rgba(0,229,255,.2);border-color:var(--front);
+  color:var(--front);font-weight:700;}
 
-    /* ── Category bar (row 2, clearly below topbar) ── */
-    #cat-bar{
-      position:fixed;
-      top:calc(var(--safe-t)+46px);
-      left:0;right:0;z-index:19;
-      display:flex;justify-content:center;gap:6px;
-      padding:5px 10px 4px;
-      background:linear-gradient(rgba(10,10,15,.7),transparent);
-    }
-    .cat-btn{
-      padding:5px 12px;border-radius:20px;font-size:11px;cursor:pointer;
-      border:1px solid rgba(255,255,255,.22);background:rgba(10,10,15,.75);
-      color:rgba(255,255,255,.65);transition:all .2s;white-space:nowrap;
-    }
-    .cat-btn.active{
-      background:rgba(0,229,255,.2);border-color:var(--front);
-      color:var(--front);font-weight:700;
-    }
+/* ══ Debug panel (appears BELOW header) ══ */
+#debug-panel{
+  display:none;position:fixed;left:8px;right:8px;z-index:30;
+  /* top is set dynamically by JS after header height is known */
+  top:100px;
+  background:rgba(0,0,0,.96);border:1px solid rgba(0,188,212,.7);border-radius:8px;
+  padding:10px 12px;font-family:'Courier New',monospace;font-size:10px;
+  color:#0ff;line-height:1.65;max-height:60vh;overflow-y:auto;
+}
+#debug-panel.show{display:block;}
+#debug-panel .dk{color:rgba(255,255,255,.4);display:inline-block;min-width:140px;}
+#debug-panel .dv{color:#fff;word-break:break-all;}
+#debug-panel .dh{color:#ffb800;font-weight:bold;margin:4px 0 2px;}
+.ok{color:#0f6!important;}.ng{color:#f66!important;}
 
-    /* ── Debug panel ── */
-    #debug-panel{
-      display:none;position:fixed;
-      top:calc(var(--safe-t)+90px);  /* below both bars */
-      left:8px;right:8px;z-index:30;
-      background:rgba(0,0,0,.95);border:1px solid rgba(0,188,212,.7);border-radius:8px;
-      padding:10px 12px;font-family:'Courier New',monospace;font-size:10px;
-      color:#0ff;line-height:1.65;max-height:55vh;overflow-y:auto;
-    }
-    #debug-panel.show{display:block;}
-    #debug-panel .dk{color:rgba(255,255,255,.4);display:inline-block;min-width:145px;}
-    #debug-panel .dv{color:#fff;word-break:break-all;}
-    #debug-panel .dh{color:#ffb800;font-weight:bold;margin:4px 0 2px;}
-    #debug-panel .ok{color:#0f6!important;}
-    #debug-panel .ng{color:#f66!important;}
+/* ══ Left badges ══ */
+#score-panel{position:fixed;left:12px;z-index:18;
+  display:none;flex-direction:column;gap:8px;top:100px;}/* updated by JS */
+#score-panel.show{display:flex;}
+.hex-badge{width:76px;height:68px;
+  background:rgba(0,229,255,.14);border:1.5px solid rgba(0,229,255,.6);
+  clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;}
+.hex-badge .hval{font-size:16px;font-weight:700;color:#fff;line-height:1;}
+.hex-badge .hlbl{font-size:8px;color:rgba(0,229,255,.9);letter-spacing:1px;margin-top:2px;text-align:center;}
 
-    /* ── Left badges ── */
-    #score-panel{
-      position:fixed;top:calc(var(--safe-t)+95px);left:12px;z-index:18;
-      display:none;flex-direction:column;gap:8px;
-    }
-    #score-panel.show{display:flex;}
-    .hex-badge{
-      width:76px;height:68px;
-      background:rgba(0,229,255,.14);border:1.5px solid rgba(0,229,255,.6);
-      clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);
-      display:flex;flex-direction:column;align-items:center;justify-content:center;
-    }
-    .hex-badge .hval{font-size:16px;font-weight:700;color:#fff;line-height:1;}
-    .hex-badge .hlbl{font-size:8px;color:rgba(0,229,255,.9);letter-spacing:1px;margin-top:2px;text-align:center;}
+/* ══ Right info panel ══ */
+#info-panel{position:fixed;top:50%;right:10px;z-index:18;transform:translateY(-50%);
+  display:none;flex-direction:column;gap:4px;}
+#info-panel.show{display:flex;}
+.sec{background:rgba(10,10,15,.82);border:1px solid rgba(255,255,255,.13);
+  border-radius:7px;padding:5px 9px;font-size:10px;
+  color:rgba(255,255,255,.6);white-space:nowrap;text-align:right;}
+.sec .st{font-size:9px;color:rgba(255,255,255,.3);letter-spacing:1px;margin-bottom:3px;}
+.sec .row{display:flex;justify-content:space-between;gap:8px;line-height:1.65;}
+.sec .row .lb{color:rgba(255,255,255,.45);}
+.sec .row .vl{color:#fff;font-weight:700;min-width:52px;text-align:right;font-family:'Courier New',monospace;}
+.fc{color:var(--front)!important;}.bc{color:var(--back)!important;}
+.sc2{color:var(--side)!important;}.cc{color:var(--center)!important;}
+.xc{color:var(--ax)!important;}.yc{color:var(--ay)!important;}.zc{color:var(--az)!important;}
 
-    /* ── Right info panel ── */
-    #info-panel{
-      position:fixed;top:50%;right:10px;z-index:18;transform:translateY(-50%);
-      display:none;flex-direction:column;gap:4px;
-    }
-    #info-panel.show{display:flex;}
-    .info-section{
-      background:rgba(10,10,15,.82);border:1px solid rgba(255,255,255,.13);
-      border-radius:7px;padding:5px 9px;font-size:10px;
-      color:rgba(255,255,255,.6);white-space:nowrap;text-align:right;
-    }
-    .info-section .sec-title{font-size:9px;color:rgba(255,255,255,.3);letter-spacing:1px;margin-bottom:3px;}
-    .info-section .row{display:flex;justify-content:space-between;gap:8px;line-height:1.65;}
-    .info-section .row .lbl{color:rgba(255,255,255,.45);}
-    .info-section .row .val{color:#fff;font-weight:700;min-width:48px;text-align:right;font-family:'Courier New',monospace;}
-    .fc{color:var(--front)!important;}.bc{color:var(--back)!important;}
-    .sc{color:var(--side)!important;} .cc{color:var(--center)!important;}
-    .xc{color:var(--axis-x)!important;}.yc{color:var(--axis-y)!important;}
-    .zc{color:var(--axis-z)!important;}.lc{color:var(--label)!important;}
+/* ══ Bottom ══ */
+#bottom{position:fixed;bottom:0;left:0;right:0;z-index:18;
+  padding:8px 14px calc(var(--safe-b)+10px);
+  background:linear-gradient(transparent,rgba(10,10,15,.92));
+  display:none;flex-direction:column;gap:3px;}
+#bottom.show{display:flex;}
+.brow{font-size:11px;color:rgba(255,255,255,.5);letter-spacing:1px;text-align:center;}
+.brow span{font-weight:700;color:#fff;}
+.lrow{display:flex;justify-content:center;gap:8px;margin-top:2px;flex-wrap:wrap;}
+.li{font-size:9px;display:flex;align-items:center;gap:3px;color:rgba(255,255,255,.5);}
+.ld{width:7px;height:7px;border-radius:50%;}
 
-    /* ── Bottom ── */
-    #bottom{position:fixed;bottom:0;left:0;right:0;z-index:18;
-      padding:8px 14px calc(var(--safe-b)+10px);
-      background:linear-gradient(transparent,rgba(10,10,15,.92));
-      display:none;flex-direction:column;gap:3px;}
-    #bottom.show{display:flex;}
-    .brow{font-size:11px;color:rgba(255,255,255,.5);letter-spacing:1px;text-align:center;}
-    .brow span{font-weight:700;color:#fff;}
-    .legend-row{display:flex;justify-content:center;gap:8px;margin-top:2px;flex-wrap:wrap;}
-    .leg-item{font-size:9px;display:flex;align-items:center;gap:3px;color:rgba(255,255,255,.5);}
-    .leg-dot{width:7px;height:7px;border-radius:50%;}
+/* ══ Crosshair ══ */
+#crosshair{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+  pointer-events:none;z-index:6;}
+.ch-h{position:absolute;top:50%;left:-14px;right:-14px;height:1.5px;
+  transform:translateY(-50%);background:rgba(255,255,255,.3);}
+.ch-v{position:absolute;left:50%;top:-14px;bottom:-14px;width:1.5px;
+  transform:translateX(-50%);background:rgba(255,255,255,.3);}
 
-    /* ── Crosshair ── */
-    #crosshair{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
-      pointer-events:none;z-index:6;}
-    .ch-h{position:absolute;top:50%;left:-14px;right:-14px;height:1.5px;
-      transform:translateY(-50%);background:rgba(255,255,255,.3);}
-    .ch-v{position:absolute;left:50%;top:-14px;bottom:-14px;width:1.5px;
-      transform:translateX(-50%);background:rgba(255,255,255,.3);}
+/* ══ Splash ══ */
+#splash{position:fixed;inset:0;z-index:100;background:var(--bg);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:40px;}
+#splash h1{font-size:26px;letter-spacing:6px;color:#fff;font-weight:300;}
+#splash p{font-size:12px;letter-spacing:2px;color:rgba(255,255,255,.4);text-align:center;line-height:1.8;}
+#prog-wrap{width:200px;height:2px;background:rgba(255,255,255,.1);}
+#prog-bar{height:100%;width:0%;background:#00e5ff;transition:width .3s;}
+#splash-msg{font-size:11px;color:rgba(255,255,255,.45);letter-spacing:1px;text-align:center;max-width:290px;}
+#start-btn{display:none;padding:12px 36px;border:1px solid rgba(255,255,255,.3);
+  background:rgba(255,255,255,.06);color:#fff;font-size:13px;letter-spacing:4px;
+  cursor:pointer;border-radius:4px;font-family:inherit;}
+#start-btn.show{display:block;}
+.obj-icon{font-size:48px;filter:drop-shadow(0 0 16px rgba(0,229,255,.5));}
 
-    /* ── Splash ── */
-    #splash{position:fixed;inset:0;z-index:100;background:var(--bg);
-      display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:40px;}
-    #splash h1{font-size:26px;letter-spacing:6px;color:#fff;font-weight:300;}
-    #splash p{font-size:12px;letter-spacing:2px;color:rgba(255,255,255,.4);text-align:center;line-height:1.8;}
-    #prog-wrap{width:200px;height:2px;background:rgba(255,255,255,.1);}
-    #prog-bar{height:100%;width:0%;background:#00e5ff;transition:width .3s;}
-    #splash-msg{font-size:11px;color:rgba(255,255,255,.45);letter-spacing:1px;text-align:center;max-width:290px;}
-    #start-btn{display:none;padding:12px 36px;border:1px solid rgba(255,255,255,.3);
-      background:rgba(255,255,255,.06);color:#fff;font-size:13px;letter-spacing:4px;
-      cursor:pointer;border-radius:4px;font-family:inherit;}
-    #start-btn.show{display:block;}
-    .obj-icon{font-size:48px;filter:drop-shadow(0 0 16px rgba(0,229,255,.5));}
+/* ══ Perm ══ */
+#perm{display:none;position:fixed;inset:0;z-index:101;background:var(--bg);
+  flex-direction:column;align-items:center;justify-content:center;gap:22px;
+  padding:40px;text-align:center;}
+#perm.show{display:flex;}
+#perm .icon{font-size:50px;}
+#perm p{font-size:13px;color:rgba(255,255,255,.6);line-height:1.8;}
+#perm-btn{padding:13px 38px;border:1px solid rgba(255,255,255,.3);
+  background:rgba(255,255,255,.08);color:#fff;font-family:inherit;
+  font-size:13px;letter-spacing:3px;cursor:pointer;border-radius:4px;}
 
-    /* ── Perm ── */
-    #perm{display:none;position:fixed;inset:0;z-index:101;background:var(--bg);
-      flex-direction:column;align-items:center;justify-content:center;gap:22px;padding:40px;text-align:center;}
-    #perm.show{display:flex;}
-    #perm .icon{font-size:50px;}
-    #perm p{font-size:13px;color:rgba(255,255,255,.6);line-height:1.8;}
-    #perm-btn{padding:13px 38px;border:1px solid rgba(255,255,255,.3);
-      background:rgba(255,255,255,.08);color:#fff;font-family:inherit;
-      font-size:13px;letter-spacing:3px;cursor:pointer;border-radius:4px;}
+/* ══ Switching ══ */
+#switching{display:none;position:fixed;inset:0;z-index:50;
+  align-items:center;justify-content:center;flex-direction:column;gap:12px;
+  background:rgba(10,10,15,.78);}
+#switching.show{display:flex;}
+#switching p{font-size:13px;color:rgba(255,255,255,.7);letter-spacing:2px;}
+.spin{width:32px;height:32px;border:3px solid rgba(0,229,255,.2);
+  border-top-color:var(--front);border-radius:50%;animation:spin .8s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg)}}
+```
 
-    /* ── Switching overlay ── */
-    #switching{display:none;position:fixed;inset:0;z-index:50;
-      align-items:center;justify-content:center;flex-direction:column;gap:12px;
-      background:rgba(10,10,15,.78);}
-    #switching.show{display:flex;}
-    #switching p{font-size:13px;color:rgba(255,255,255,.7);letter-spacing:2px;}
-    .spin{width:32px;height:32px;border:3px solid rgba(0,229,255,.2);
-      border-top-color:var(--front);border-radius:50%;animation:spin .8s linear infinite;}
-    @keyframes spin{to{transform:rotate(360deg)}}
   </style>
 </head>
 <body>
 
 <video id="video" autoplay playsinline muted webkit-playsinline></video>
 <canvas id="canvas"></canvas>
+
 <div id="crosshair"><div class="ch-h"></div><div class="ch-v"></div></div>
 
-<!-- Row 1: topbar -->
-<div id="topbar">
-  <div class="logo">3DOBJ</div>
-  <div class="sub">物体検出</div>
-  <div class="spacer"></div>
-  <button id="dbg-btn">DBG</button>
-  <button id="cam-btn">⟳</button>
-  <div id="fps-box">-- FPS</div>
-  <div id="status-dot" class="loading"></div>
+<!-- ══ 2-row header ══ -->
+
+<div id="header">
+  <!-- row 1: title + controls -->
+  <div id="topbar">
+    <div class="logo">3DOBJ</div>
+    <div class="sub">物体検出</div>
+    <div class="sp"></div>
+    <button id="dbg-btn">DBG</button>
+    <button id="cam-btn">⟳</button>
+    <div id="fps-box">-- FPS</div>
+    <div id="status-dot" class="loading"></div>
+  </div>
+  <!-- row 2: category -->
+  <div id="cat-bar">
+    <button class="cat-btn active" data-cat="Cup">☕ カップ</button>
+    <button class="cat-btn" data-cat="Chair">🪑 椅子</button>
+    <button class="cat-btn" data-cat="Camera">📷 カメラ</button>
+    <button class="cat-btn" data-cat="Shoe">👟 靴</button>
+  </div>
 </div>
 
-<!-- Row 2: category buttons (clearly below topbar) -->
-<div id="cat-bar">
-  <button class="cat-btn active" data-cat="Cup">☕ カップ</button>
-  <button class="cat-btn" data-cat="Chair">🪑 椅子</button>
-  <button class="cat-btn" data-cat="Camera">📷 カメラ</button>
-  <button class="cat-btn" data-cat="Shoe">👟 靴</button>
-</div>
-
-<!-- Debug panel appears BELOW both bars -->
 <div id="debug-panel"></div>
+<div id="switching"><div class="spin"></div><p id="sw-msg">モデル切替中…</p></div>
 
-<div id="switching"><div class="spin"></div><p id="switching-msg">モデル切替中…</p></div>
-
-<!-- Left badges (pushed down below cat-bar) -->
 <div id="score-panel">
   <div class="hex-badge">
     <div class="hval" id="conf-val">--</div>
@@ -218,50 +197,50 @@
   </div>
   <div class="hex-badge">
     <div class="hval" id="dist-val">--</div>
-    <div class="hlbl">距離推定</div>
+    <div class="hlbl">距離(m)</div>
   </div>
 </div>
 
-<!-- Right info panel -->
 <div id="info-panel">
-  <div class="info-section">
-    <div class="sec-title">3D バウンディングボックス</div>
-    <div class="row"><span class="lbl fc">幅 (W)</span>   <span class="val" id="v-w">--</span></div>
-    <div class="row"><span class="lbl sc">高さ (H)</span> <span class="val" id="v-h">--</span></div>
-    <div class="row"><span class="lbl bc">奥行 (D)</span> <span class="val" id="v-d">--</span></div>
-    <div class="row"><span class="lbl cc">中心 X</span>   <span class="val" id="v-cx">--</span></div>
-    <div class="row"><span class="lbl cc">中心 Y</span>   <span class="val" id="v-cy">--</span></div>
+  <div class="sec">
+    <div class="st">スケール (meters)</div>
+    <div class="row"><span class="lb fc">幅</span>  <span class="vl" id="v-sw">--</span></div>
+    <div class="row"><span class="lb sc2">高さ</span><span class="vl" id="v-sh">--</span></div>
+    <div class="row"><span class="lb bc">奥行</span><span class="vl" id="v-sd">--</span></div>
   </div>
-  <div class="info-section">
-    <div class="sec-title">姿勢・向き</div>
-    <div class="row"><span class="lbl xc">X 軸回転</span><span class="val" id="v-rx">--°</span></div>
-    <div class="row"><span class="lbl yc">Y 軸回転</span><span class="val" id="v-ry">--°</span></div>
-    <div class="row"><span class="lbl zc">Z 軸回転</span><span class="val" id="v-rz">--°</span></div>
+  <div class="sec">
+    <div class="st">位置・距離 (m)</div>
+    <div class="row"><span class="lb xc">Tx</span><span class="vl" id="v-tx">--</span></div>
+    <div class="row"><span class="lb yc">Ty</span><span class="vl" id="v-ty">--</span></div>
+    <div class="row"><span class="lb zc">Tz (深度)</span><span class="vl" id="v-tz">--</span></div>
   </div>
-  <div class="info-section">
-    <div class="sec-title">フレーム内情報</div>
-    <div class="row"><span class="lbl">可視頂点</span><span class="val" id="v-vis">--/8</span></div>
-    <div class="row"><span class="lbl">投影面積</span><span class="val" id="v-area">--%</span></div>
-    <div class="row"><span class="lbl">検出数</span>  <span class="val" id="v-count">--</span></div>
+  <div class="sec">
+    <div class="st">回転 (°) from R</div>
+    <div class="row"><span class="lb xc">Pitch</span><span class="vl" id="v-pitch">--°</span></div>
+    <div class="row"><span class="lb yc">Yaw</span>  <span class="vl" id="v-yaw">--°</span></div>
+    <div class="row"><span class="lb zc">Roll</span>  <span class="vl" id="v-roll">--°</span></div>
+  </div>
+  <div class="sec">
+    <div class="st">フレーム情報</div>
+    <div class="row"><span class="lb">投影面積</span><span class="vl" id="v-area">--%</span></div>
+    <div class="row"><span class="lb">検出数</span>  <span class="vl" id="v-count">--</span></div>
   </div>
 </div>
 
-<!-- Bottom -->
 <div id="bottom">
   <div class="brow" id="obj-info">物体をカメラに向けてください 📦</div>
   <div class="brow">カテゴリ <span id="v-cat">Cup</span> &nbsp;|&nbsp; ライブラリ <span id="v-lib">--</span></div>
-  <div class="legend-row">
-    <div class="leg-item"><div class="leg-dot" style="background:var(--front)"></div>前面</div>
-    <div class="leg-item"><div class="leg-dot" style="background:var(--back)"></div>背面</div>
-    <div class="leg-item"><div class="leg-dot" style="background:var(--side)"></div>側辺</div>
-    <div class="leg-item"><div class="leg-dot" style="background:var(--center)"></div>中心</div>
-    <div class="leg-item"><div class="leg-dot" style="background:var(--axis-x)"></div>X</div>
-    <div class="leg-item"><div class="leg-dot" style="background:var(--axis-y)"></div>Y</div>
-    <div class="leg-item"><div class="leg-dot" style="background:var(--axis-z)"></div>Z</div>
+  <div class="lrow">
+    <div class="li"><div class="ld" style="background:var(--front)"></div>前面</div>
+    <div class="li"><div class="ld" style="background:var(--back)"></div>背面</div>
+    <div class="li"><div class="ld" style="background:var(--side)"></div>側辺</div>
+    <div class="li"><div class="ld" style="background:var(--center)"></div>中心</div>
+    <div class="li"><div class="ld" style="background:var(--ax)"></div>X</div>
+    <div class="li"><div class="ld" style="background:var(--ay)"></div>Y</div>
+    <div class="li"><div class="ld" style="background:var(--az)"></div>Z</div>
   </div>
 </div>
 
-<!-- Splash -->
 <div id="splash">
   <div class="obj-icon">📦</div>
   <h1>3DOBJ</h1>
@@ -280,276 +259,232 @@
 <script>
 (function(){
   /*
-   * MediaPipe Objectron 9 keypoints (normalized [0,1]):
-   *  0=centroid
-   *  1=back-bottom-left   2=front-bottom-left  3=front-bottom-right  4=back-bottom-right
-   *  5=back-top-left      6=front-top-left     7=front-top-right     8=back-top-right
+   * ── MediaPipe Objectron 結果構造 (デバッグ実測) ──────────────────────
+   *  det.translation : number[] len=3  [tx, ty, tz] カメラ空間・メートル
+   *  det.rotation    : number[] len=9  行優先3×3 回転行列 [r00..r22]
+   *  det.scale       : number[] len=3  [width, height, depth] メートル
+   *  det.keypoints   : ??? len=9 各要素が x=undefined (フラット数値配列 or proto)
+   *  → keypoints は信頼できないため translation+rotation+scale から自前射影する
    *
-   * Results fields tried (depends on @mediapipe/objectron version):
-   *  results.objectDetections[].keypoints      (2D normalized)
-   *  results.objectDetections[].keypoints3d    (3D, x/y/z normalized)
-   *  results.objectDetections[].landmarks      (alt name)
-   *  results.objectDetections[].landmarks3d
+   * 3D ボックス 8頂点の符号 (物体座標系):
+   *  1:(-1,-1,-1) 2:(-1,-1,+1) 3:(+1,-1,+1) 4:(+1,-1,-1)
+   *  5:(-1,+1,-1) 6:(-1,+1,+1) 7:(+1,+1,+1) 8:(+1,+1,-1)
+   *  0: centroid (原点)
+   * ────────────────────────────────────────────────────────────────────
    */
 
-  // ── Dynamic script loader ──
-  const OBJECTRON_URLS = [
+  const CORNER_SIGNS = [
+    [0,0,0],
+    [-1,-1,-1],[-1,-1,1],[1,-1,1],[1,-1,-1],
+    [-1,1,-1],[-1,1,1],[1,1,1],[1,1,-1],
+  ];
+
+  const BOX_EDGES = [
+    [1,2,'side'],[2,3,'front'],[3,4,'side'],[4,1,'back'],
+    [5,6,'side'],[6,7,'front'],[7,8,'side'],[8,5,'back'],
+    [1,5,'back'],[2,6,'front'],[3,7,'front'],[4,8,'back'],
+  ];
+  const ECOL={front:'#00e5ff',back:'#4a9eff',side:'#00e676'};
+  const ELW ={front:3.5,back:2.0,side:2.5};
+  const EBLR={front:7,back:2,side:4};
+  const C={center:'#ffb800',lbl:'#c084fc',ax:'#ff6b6b',ay:'#00e676',az:'#4a9eff'};
+
+  // ── CDN loader ──
+  const URLS=[
     'https://cdn.jsdelivr.net/npm/@mediapipe/objectron@0.4.1640569987/objectron.js',
     'https://cdn.jsdelivr.net/npm/@mediapipe/objectron@0.4/objectron.js',
     'https://cdn.jsdelivr.net/npm/@mediapipe/objectron/objectron.js',
     'https://unpkg.com/@mediapipe/objectron@0.4.1640569987/objectron.js',
     'https://unpkg.com/@mediapipe/objectron/objectron.js',
   ];
-  const OBJECTRON_BASES = [
+  const BASES=[
     'https://cdn.jsdelivr.net/npm/@mediapipe/objectron@0.4.1640569987/',
     'https://cdn.jsdelivr.net/npm/@mediapipe/objectron@0.4/',
     'https://cdn.jsdelivr.net/npm/@mediapipe/objectron/',
     'https://unpkg.com/@mediapipe/objectron@0.4.1640569987/',
     'https://unpkg.com/@mediapipe/objectron/',
   ];
-
   function loadScript(src){
     return new Promise((res,rej)=>{
       const s=document.createElement('script');
-      s.src=src; s.crossOrigin='anonymous';
-      s.onload=res; s.onerror=()=>rej(new Error('failed: '+src));
+      s.src=src;s.crossOrigin='anonymous';s.onload=res;s.onerror=()=>rej(new Error(src));
       document.head.appendChild(s);
     });
   }
-  function resolveObjectronClass(){
-    if(typeof Objectron!=='undefined'&&typeof Objectron==='function') return Objectron;
-    if(window.Objectron) return window.Objectron;
-    if(window.objectron?.Objectron) return window.objectron.Objectron;
-    for(const k of Object.keys(window)){
+  function findClass(){
+    for(const k of['Objectron',...Object.keys(window)]){
       const v=window[k];
       if(v&&typeof v==='function'&&v.prototype&&
-         typeof v.prototype.setOptions==='function'&&
-         typeof v.prototype.onResults==='function') return v;
+         typeof v.prototype.setOptions==='function') return v;
     }
     return null;
   }
 
-  // ── Box geometry ──
-  const BOX_EDGES=[
-    [1,2,'side'],[2,3,'front'],[3,4,'side'],[4,1,'back'],
-    [5,6,'side'],[6,7,'front'],[7,8,'side'],[8,5,'back'],
-    [1,5,'back'],[2,6,'front'],[3,7,'front'],[4,8,'back'],
-  ];
-  const EDGE_COL={front:'#00e5ff',back:'#4a9eff',side:'#00e676'};
-  const EDGE_LW ={front:3.5,back:2.0,side:2.5};
-  const EDGE_BLR={front:6,back:2,side:3};
-  const C={center:'#ffb800',label:'#c084fc',axisX:'#ff6b6b',axisY:'#00e676',axisZ:'#4a9eff'};
+  // ── 3D → 2D Projection ────────────────────────────────────────────────
+  // Returns array of 9 screen points {x,y,z_cam} or null if invalid
+  function project3DBox(det, vw, vh, doMirror){
+    const T=det.translation, R=det.rotation, S=det.scale;
+    if(!T||!R||!S||T.length<3||R.length<9||S.length<3) return null;
 
-  // ── Math helpers ──
-  function valid(p){ return p!=null&&typeof p.x==='number'&&!isNaN(p.x)&&!isNaN(p.y); }
-  function dist2d(a,b){ if(!valid(a)||!valid(b))return 0; return Math.sqrt((a.x-b.x)**2+(a.y-b.y)**2); }
-  function avgZ(kps,idxs){ let s=0,n=0; idxs.forEach(i=>{if(kps[i]?.z!=null&&!isNaN(kps[i].z)){s+=kps[i].z;n++;}}); return n?s/n:0; }
+    const tx=T[0],ty=T[1],tz=T[2];
+    if(!tz||tz<=0) return null; // behind camera
 
-  function estimateRotation(rawKps){
-    const p5=rawKps[5],p6=rawKps[6],p8=rawKps[8];
-    if(!p5||!p6||!p8) return {rx:null,ry:null,rz:null};
-    const e1={x:p6.x-p5.x,y:p6.y-p5.y,z:(p6.z||0)-(p5.z||0)};
-    const e2={x:p8.x-p5.x,y:p8.y-p5.y,z:(p8.z||0)-(p5.z||0)};
-    const nx=e1.y*e2.z-e1.z*e2.y,ny=e1.z*e2.x-e1.x*e2.z,nz=e1.x*e2.y-e1.y*e2.x;
-    const nl=Math.sqrt(nx*nx+ny*ny+nz*nz);
-    if(nl<1e-8||isNaN(nl)) return {rx:null,ry:null,rz:null};
-    const rx=Math.round(Math.atan2(ny/nl,nz/nl)*180/Math.PI);
-    const ry=Math.round(Math.atan2(nx/nl,nz/nl)*180/Math.PI);
-    const p7=rawKps[7];
-    if(!p7) return {rx,ry,rz:null};
-    const rz=Math.round(Math.atan2(p7.y-p6.y,p7.x-p6.x)*180/Math.PI);
-    return {rx:isNaN(rx)?null:rx, ry:isNaN(ry)?null:ry, rz:isNaN(rz)?null:rz};
-  }
+    // Approximate camera intrinsics (typical phone horizontal FOV ~60-70°)
+    const focal=Math.max(vw,vh)*1.1;
+    const ppx=vw/2, ppy=vh/2;
 
-  function projectedArea(kps,vw,vh){
-    const pts=kps.filter(valid);
-    if(!pts.length) return null;
-    const xs=pts.map(p=>p.x),ys=pts.map(p=>p.y);
-    const area=(Math.max(...xs)-Math.min(...xs))*(Math.max(...ys)-Math.min(...ys));
-    return Math.round(area/(vw*vh)*100);
-  }
-
-  function estimateDist(kps,vw){
-    const d=dist2d(kps[2],kps[8]);
-    return d?Math.min(99,Math.max(1,Math.round(3000/d))):null;
-  }
-
-  // Scale coords to canvas pixels
-  // Handles both normalized [0,1] and already-pixel coords
-  function scaleKps(kps,cw,ch,doMirror){
-    if(!kps||!kps.length) return [];
-    const maxX=kps.reduce((m,p)=>p&&p.x!=null&&p.x>m?p.x:m,0);
-    const isNorm=maxX<=1.5;
-    return kps.map(p=>{
-      if(!p||p.x==null) return {x:NaN,y:NaN,z:p?.z};
-      let x=isNorm?p.x*cw:p.x, y=isNorm?p.y*ch:p.y;
-      if(doMirror) x=cw-x;
-      return {...p,x,y};
+    return CORNER_SIGNS.map(([sx,sy,sz])=>{
+      // Object-space corner (half-extents)
+      const ox=sx*S[0]/2, oy=sy*S[1]/2, oz=sz*S[2]/2;
+      // Camera-space = R * object + T  (R is row-major)
+      const cx3=R[0]*ox+R[1]*oy+R[2]*oz + tx;
+      const cy3=R[3]*ox+R[4]*oy+R[5]*oz + ty;
+      const cz3=R[6]*ox+R[7]*oy+R[8]*oz + tz;
+      if(cz3<=0) return {x:null,y:null,z:cz3};
+      let x=focal*cx3/cz3+ppx;
+      let y=focal*cy3/cz3+ppy;
+      if(doMirror) x=vw-x;
+      return {x,y,z:cz3};
     });
   }
 
-  // ── Extract keypoints from a detection object ──
-  // Returns {kps2d, kps3d} — tries every known field name
-  function extractKeypoints(det){
-    // Possible 2D keypoint field names
-    const kps2d =
-      det.keypoints      ||
-      det.landmarks      ||
-      det.boundingBox2D  ||
-      null;
-    // Possible 3D keypoint field names
-    const kps3d =
-      det.keypoints3D    ||
-      det.keypoints3d    ||
-      det.landmarks3d    ||
-      det.landmarks3D    ||
-      null;
-    return {kps2d: Array.isArray(kps2d)?kps2d:[], kps3d: Array.isArray(kps3d)?kps3d:[]};
+  // ── Rotation matrix → Euler angles (YXZ convention) ──
+  function matToEuler(R){
+    if(!R||R.length<9) return {pitch:null,yaw:null,roll:null};
+    // R in row-major: R[row*3+col]
+    const pitch=Math.round(Math.asin(Math.max(-1,Math.min(1,-R[7])))*180/Math.PI);
+    const yaw  =Math.round(Math.atan2(R[6],R[8])*180/Math.PI);
+    const roll =Math.round(Math.atan2(R[1],R[4])*180/Math.PI);
+    return {
+      pitch:isNaN(pitch)?null:pitch,
+      yaw:isNaN(yaw)?null:yaw,
+      roll:isNaN(roll)?null:roll
+    };
+  }
+
+  // ── Projected area ──
+  function projArea(pts,vw,vh){
+    const valid=pts.filter(p=>p&&p.x!=null&&!isNaN(p.x));
+    if(!valid.length) return null;
+    const xs=valid.map(p=>p.x),ys=valid.map(p=>p.y);
+    return Math.round((Math.max(...xs)-Math.min(...xs))*(Math.max(...ys)-Math.min(...ys))/(vw*vh)*100);
   }
 
   // ── State ──
-  let ObjectronClass=null, objectron=null, locateBase='';
+  let ObjClass=null, objectron=null, locateBase='';
   let stream=null, animId=null, running=false;
   let facingMode='environment', lastTime=0, fpsArr=[];
   let currentCat='Cup', switching=false, debugMode=false;
-  let lastResults=null;
+  let lastResults=null, rawSnap=null;
   let dbgLog=[];
-  let rawResultsSnapshot=null; // for inspection
 
   const video  = document.getElementById('video');
   const canvas = document.getElementById('canvas');
   const ctx    = canvas.getContext('2d');
   const dbgEl  = document.getElementById('debug-panel');
+  const header = document.getElementById('header');
+
+  // Adjust elements below header dynamically
+  function repositionBelowHeader(){
+    const h=header.getBoundingClientRect().bottom;
+    dbgEl.style.top=(h+4)+'px';
+    document.getElementById('score-panel').style.top=(h+8)+'px';
+  }
 
   document.getElementById('dbg-btn').addEventListener('click',()=>{
     debugMode=!debugMode;
     dbgEl.classList.toggle('show',debugMode);
     document.getElementById('dbg-btn').classList.toggle('active',debugMode);
+    if(debugMode){repositionBelowHeader();renderDebug(null,0,0);}
   });
 
   function renderDebug(dets,vw,vh){
     if(!debugMode) return;
     let h=`<div class="dh">─── DEBUG ───</div>`;
-    h+=`<div><span class="dk">Objectron loaded</span><span class="dv ${ObjectronClass?'ok':'ng'}">${ObjectronClass?'✓ loaded':'✗ MISSING'}</span></div>`;
-    h+=`<div><span class="dk">CDN base</span><span class="dv">${locateBase.replace('https://','').split('/').slice(0,3).join('/')||'--'}</span></div>`;
+    h+=`<div><span class="dk">Objectron</span><span class="${ObjClass?'ok':'ng'}">${ObjClass?'✓ loaded':'✗ MISSING'}</span></div>`;
+    h+=`<div><span class="dk">CDN</span><span class="dv">${locateBase.replace('https://','').split('/').slice(0,3).join('/')||'--'}</span></div>`;
     h+=`<div><span class="dk">video</span><span class="dv">${vw}×${vh} / ${facingMode}</span></div>`;
     h+=`<div><span class="dk">detections</span><span class="dv">${dets?dets.length:'--'}</span></div>`;
-
-    // Raw results structure inspection
-    if(rawResultsSnapshot){
-      h+=`<div class="dh">── results fields ──</div>`;
-      const keys=Object.keys(rawResultsSnapshot);
-      h+=`<div><span class="dk">results.keys</span><span class="dv">[${keys.join(', ')}]</span></div>`;
-      // Check each array field
-      keys.forEach(k=>{
-        const v=rawResultsSnapshot[k];
-        if(Array.isArray(v)){
-          h+=`<div><span class="dk">  .${k}</span><span class="dv">Array(${v.length})</span></div>`;
-          if(v.length>0){
-            const d0=v[0];
-            const dk=Object.keys(d0);
-            h+=`<div><span class="dk">    [0].keys</span><span class="dv">[${dk.join(', ')}]</span></div>`;
-            // Show keypoint counts and first value
-            dk.forEach(f=>{
-              const fv=d0[f];
-              if(Array.isArray(fv)){
-                const p0=fv[0];
-                h+=`<div><span class="dk">    .${f}</span><span class="dv">len:${fv.length} p0:{x:${p0?.x?.toFixed?.(3)||p0?.x},y:${p0?.y?.toFixed?.(3)||p0?.y},z:${p0?.z?.toFixed?.(3)||p0?.z}}</span></div>`;
-              } else if(typeof fv==='number'){
-                h+=`<div><span class="dk">    .${f}</span><span class="dv">${fv.toFixed(4)}</span></div>`;
-              }
-            });
+    if(rawSnap){
+      h+=`<div class="dh">── results ──</div>`;
+      const keys=Object.keys(rawSnap);
+      h+=`<div><span class="dk">keys</span><span class="dv">[${keys.join(',')}]</span></div>`;
+      if(rawSnap.objectDetections?.length){
+        const d=rawSnap.objectDetections[0];
+        const dk=Object.keys(d);
+        h+=`<div><span class="dk">[0].keys</span><span class="dv">[${dk.join(',')}]</span></div>`;
+        ['translation','rotation','scale'].forEach(f=>{
+          const v=d[f];
+          if(v!=null){
+            const s=Array.isArray(v)?v.slice(0,4).map(x=>typeof x==='number'?x.toFixed(3):x).join(','):typeof v;
+            h+=`<div><span class="dk">.${f}</span><span class="dv ok">len:${v.length||'?'} [${s}…]</span></div>`;
           }
+        });
+        if(d.translation){
+          const T=d.translation;
+          h+=`<div><span class="dk">distance(Tz)</span><span class="dv ok">${typeof T[2]==='number'?T[2].toFixed(3)+'m':'?'}</span></div>`;
         }
-      });
+      }
     }
-
-    // CDN log
     if(dbgLog.length){
       h+=`<div class="dh">── CDN ──</div>`;
-      dbgLog.forEach(l=>{
-        h+=`<div><span class="${l.ok?'ok':'ng'}">${l.ok?'✓':'✗'} ${l.msg}</span></div>`;
-      });
+      dbgLog.forEach(l=>{h+=`<div><span class="${l.ok?'ok':'ng'}">${l.ok?'✓':'✗'} ${l.msg}</span></div>`;});
     }
     dbgEl.innerHTML=h;
   }
 
   // ── Load library ──
-  async function loadObjectronLib(){
-    const bar=document.getElementById('prog-bar');
-    const msg=document.getElementById('splash-msg');
-    for(let i=0;i<OBJECTRON_URLS.length;i++){
-      bar.style.width=`${12+i*14}%`;
-      msg.textContent=`CDN試行 ${i+1}/${OBJECTRON_URLS.length}…`;
+  async function loadLib(){
+    const bar=document.getElementById('prog-bar'),msg=document.getElementById('splash-msg');
+    for(let i=0;i<URLS.length;i++){
+      bar.style.width=`${10+i*15}%`;
+      msg.textContent=`CDN試行 ${i+1}/${URLS.length}…`;
       try{
-        await loadScript(OBJECTRON_URLS[i]);
-        const cls=resolveObjectronClass();
+        await loadScript(URLS[i]);
+        const cls=findClass();
         if(cls){
-          ObjectronClass=cls; locateBase=OBJECTRON_BASES[i];
-          dbgLog.push({ok:true,msg:OBJECTRON_URLS[i].split('/').slice(-3).join('/')});
-          bar.style.width='80%';
-          msg.textContent='Objectron ロード完了';
+          ObjClass=cls;locateBase=BASES[i];
+          dbgLog.push({ok:true,msg:URLS[i].split('/').slice(-3).join('/')});
+          bar.style.width='80%';msg.textContent='Objectron ロード完了';
           return;
         }
-        dbgLog.push({ok:false,msg:'no class: '+OBJECTRON_URLS[i].split('/').slice(-2).join('/')});
-      }catch(e){
-        dbgLog.push({ok:false,msg:e.message.slice(0,50)});
-      }
+        dbgLog.push({ok:false,msg:'class not found: '+URLS[i].split('/').pop()});
+      }catch(e){dbgLog.push({ok:false,msg:String(e).slice(0,50)});}
     }
-    throw new Error('全 CDN で Objectron が見つかりません');
+    throw new Error('全CDNでObjectronが見つかりません');
   }
 
-  // ── Build Objectron instance ──
   function buildInstance(cat){
-    const obj=new ObjectronClass({
-      locateFile:(f)=>locateBase+f
-    });
-    obj.setOptions({
-      modelName:cat,
-      maxNumObjects:3,
-      minDetectionConfidence:0.5,
-      minTrackingConfidence:0.99,
-    });
-    obj.onResults((r)=>{
-      lastResults=r;
-      rawResultsSnapshot=r; // capture for debug
-    });
+    const obj=new ObjClass({locateFile:(f)=>locateBase+f});
+    obj.setOptions({modelName:cat,maxNumObjects:3,
+      minDetectionConfidence:0.5,minTrackingConfidence:0.99});
+    obj.onResults((r)=>{lastResults=r;rawSnap=r;});
     return obj;
   }
 
-  // ── Load model ──
   async function loadModel(){
-    const bar=document.getElementById('prog-bar');
-    const msg=document.getElementById('splash-msg');
+    const bar=document.getElementById('prog-bar'),msg=document.getElementById('splash-msg');
     bar.style.width='5%';
-    await loadObjectronLib();
-    bar.style.width='85%'; msg.textContent='インスタンス初期化中…';
-    try{
-      objectron=buildInstance(currentCat);
-      await objectron.initialize();
-    }catch(e){
-      console.warn('initialize() skip:', e);
-      objectron=buildInstance(currentCat);
-    }
-    bar.style.width='100%'; msg.textContent=`準備完了 — ${currentCat}`;
+    await loadLib();
+    bar.style.width='85%';msg.textContent='インスタンス初期化中…';
+    try{objectron=buildInstance(currentCat);await objectron.initialize();}
+    catch(e){console.warn('init skip:',e);objectron=buildInstance(currentCat);}
+    bar.style.width='100%';msg.textContent=`準備完了 — ${currentCat}`;
     await new Promise(r=>setTimeout(r,300));
     document.getElementById('start-btn').classList.add('show');
     msg.textContent='タップして開始';
-    document.getElementById('v-lib').textContent=
-      locateBase.includes('unpkg')?'unpkg':'jsdelivr';
+    document.getElementById('v-lib').textContent=locateBase.includes('unpkg')?'unpkg':'jsdelivr';
   }
 
-  // ── Switch category ──
-  async function switchCategory(cat){
+  async function switchCat(cat){
     if(cat===currentCat||switching) return;
     switching=true;
-    document.getElementById('switching-msg').textContent=`${cat} モデルに切替中…`;
+    document.getElementById('sw-msg').textContent=`${cat} に切替中…`;
     document.getElementById('switching').classList.add('show');
     cancelAnimationFrame(animId);
     try{
       if(objectron){try{objectron.close();}catch(e){}}
-      currentCat=cat;
-      rawResultsSnapshot=null;
+      currentCat=cat;rawSnap=null;
       document.getElementById('v-cat').textContent=cat;
       objectron=buildInstance(cat);
       document.querySelectorAll('.cat-btn').forEach(b=>{
@@ -563,51 +498,37 @@
     }
   }
 
-  // ── Camera ──
   async function startCamera(){
     if(stream) stream.getTracks().forEach(t=>t.stop());
     stream=await navigator.mediaDevices.getUserMedia({
-      video:{facingMode:{ideal:facingMode},width:{ideal:1280},height:{ideal:720}},
-      audio:false
+      video:{facingMode:{ideal:facingMode},width:{ideal:1280},height:{ideal:720}},audio:false
     });
     video.srcObject=stream;
     await new Promise(r=>{video.onloadedmetadata=r;});
-    await new Promise(r=>{
-      if(video.readyState>=2){r();return;}
-      video.oncanplay=r;
-    });
-    video.play();
-    resizeCanvas();
+    await new Promise(r=>{if(video.readyState>=2){r();return;}video.oncanplay=r;});
+    video.play();resizeCanvas();
     video.classList.add('ready');
     video.classList.toggle('mirror',facingMode==='user');
   }
   function resizeCanvas(){
-    canvas.width =video.videoWidth ||window.innerWidth;
+    canvas.width=video.videoWidth||window.innerWidth;
     canvas.height=video.videoHeight||window.innerHeight;
   }
 
-  // ── Main loop ──
   async function loop(){
     if(!running||switching) return;
-    const now=performance.now(),dt=now-lastTime; lastTime=now;
+    const now=performance.now(),dt=now-lastTime;lastTime=now;
     if(dt>0){
-      fpsArr.push(1000/dt); if(fpsArr.length>8) fpsArr.shift();
+      fpsArr.push(1000/dt);if(fpsArr.length>8)fpsArr.shift();
       document.getElementById('fps-box').textContent=
         Math.round(fpsArr.reduce((a,b)=>a+b)/fpsArr.length)+' FPS';
     }
-    try{ await objectron.send({image:video}); }catch(e){console.warn(e);}
-    const dets=extractDetections(lastResults);
+    try{await objectron.send({image:video});}catch(e){console.warn(e);}
+    const dets=(lastResults?.objectDetections)||[];
     draw(dets);
     animId=requestAnimationFrame(loop);
   }
 
-  function extractDetections(results){
-    if(!results) return [];
-    return results.objectDetections||results.detectedObjects||
-           results.multipleObjectDetections||results.objects||[];
-  }
-
-  // ── Draw ──
   function draw(dets){
     const vw=video.videoWidth,vh=video.videoHeight;
     if(!vw||!vh) return;
@@ -621,98 +542,97 @@
     const botEl  =document.getElementById('bottom');
 
     if(!dets||!dets.length){
-      scoreEl.classList.remove('show'); infoEl.classList.remove('show'); botEl.classList.remove('show');
+      scoreEl.classList.remove('show');infoEl.classList.remove('show');botEl.classList.remove('show');
       document.getElementById('obj-info').textContent='物体をカメラに向けてください 📦';
       document.getElementById('v-count').textContent='0';
       return;
     }
-    scoreEl.classList.add('show'); infoEl.classList.add('show'); botEl.classList.add('show');
+    scoreEl.classList.add('show');infoEl.classList.add('show');botEl.classList.add('show');
 
     const needMirror=(facingMode==='user');
 
     dets.forEach((det,di)=>{
-      // ── Extract keypoints — try all known field names ──
-      const {kps2d, kps3d}=extractKeypoints(det);
+      // ── 3D projection from translation + rotation + scale ──
+      const pts=project3DBox(det,vw,vh,needMirror);
+      if(!pts) return;
 
-      // Prefer 3D keypoints for richer data; fall back to 2D
-      // 3D kps from Objectron are already normalized [0,1] for x,y and metric for z
-      // Use 2D for screen projection, 3D for rotation estimation
-      const useKps = kps2d.length>=9 ? kps2d : kps3d.length>=9 ? kps3d : [];
-      if(useKps.length<9) return;
+      // z-depth for front/back sorting
+      const zFront=(pts[2]?.z||0+pts[3]?.z||0+pts[6]?.z||0+pts[7]?.z||0)/4;
+      const zBack =(pts[1]?.z||0+pts[4]?.z||0+pts[5]?.z||0+pts[8]?.z||0)/4;
+      const frontClose=zFront<=zBack; // smaller z = closer in camera space
 
-      const kps=scaleKps(useKps,vw,vh,needMirror);
-      // Use raw 3D if available for rotation (it has valid z)
-      const rawFor3D = kps3d.length>=9 ? kps3d : useKps;
+      ctx.lineCap='round';ctx.lineJoin='round';
 
-      // z-depth face determination
-      const zF=avgZ(useKps,[2,3,6,7]);
-      const zB=avgZ(useKps,[1,4,5,8]);
-      const frontIsClose=zF>=zB;
-
-      // ── Box edges ──
-      ctx.lineCap='round'; ctx.lineJoin='round';
+      // ── Edges ──
       BOX_EDGES.forEach(([i,j,type])=>{
-        const a=kps[i],b=kps[j]; if(!valid(a)||!valid(b)) return;
+        const a=pts[i],b=pts[j];
+        if(!a||!b||a.x==null||b.x==null||isNaN(a.x)||isNaN(b.x)) return;
         let t=type;
-        if(!frontIsClose){if(t==='front')t='back'; else if(t==='back')t='front';}
-        ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y);
-        ctx.strokeStyle=EDGE_COL[t]; ctx.lineWidth=EDGE_LW[t];
-        ctx.shadowColor=EDGE_COL[t]; ctx.shadowBlur=EDGE_BLR[t]; ctx.stroke(); ctx.shadowBlur=0;
+        if(!frontClose){if(t==='front')t='back';else if(t==='back')t='front';}
+        ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);
+        ctx.strokeStyle=ECOL[t];ctx.lineWidth=ELW[t];
+        ctx.shadowColor=ECOL[t];ctx.shadowBlur=EBLR[t];ctx.stroke();ctx.shadowBlur=0;
       });
 
       // ── Corner dots ──
       for(let i=1;i<=8;i++){
-        const p=kps[i]; if(!valid(p)) continue;
+        const p=pts[i];if(!p||p.x==null||isNaN(p.x)) continue;
         const isFront=[2,3,6,7].includes(i);
-        const col=(isFront===frontIsClose)?EDGE_COL.front:EDGE_COL.back;
+        const col=(isFront===frontClose)?ECOL.front:ECOL.back;
         const r=isFront?5:3.5;
-        ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2);
-        ctx.fillStyle=col; ctx.shadowColor=col; ctx.shadowBlur=8; ctx.fill(); ctx.shadowBlur=0;
-        ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2);
-        ctx.strokeStyle='rgba(255,255,255,.5)'; ctx.lineWidth=1.2; ctx.stroke();
+        ctx.beginPath();ctx.arc(p.x,p.y,r,0,Math.PI*2);
+        ctx.fillStyle=col;ctx.shadowColor=col;ctx.shadowBlur=8;ctx.fill();ctx.shadowBlur=0;
+        ctx.beginPath();ctx.arc(p.x,p.y,r,0,Math.PI*2);
+        ctx.strokeStyle='rgba(255,255,255,.5)';ctx.lineWidth=1.2;ctx.stroke();
       }
 
-      // ── Center dot + axis ──
-      const cp=kps[0];
-      if(valid(cp)){
-        ctx.beginPath(); ctx.arc(cp.x,cp.y,7,0,Math.PI*2);
-        ctx.fillStyle=C.center; ctx.shadowColor=C.center; ctx.shadowBlur=12; ctx.fill(); ctx.shadowBlur=0;
-        ctx.beginPath(); ctx.arc(cp.x,cp.y,7,0,Math.PI*2);
-        ctx.strokeStyle='rgba(255,255,255,.6)'; ctx.lineWidth=1.5; ctx.stroke();
+      // ── Center ──
+      const cp=pts[0];
+      if(cp&&cp.x!=null&&!isNaN(cp.x)){
+        ctx.beginPath();ctx.arc(cp.x,cp.y,7,0,Math.PI*2);
+        ctx.fillStyle=C.center;ctx.shadowColor=C.center;ctx.shadowBlur=14;ctx.fill();ctx.shadowBlur=0;
+        ctx.beginPath();ctx.arc(cp.x,cp.y,7,0,Math.PI*2);
+        ctx.strokeStyle='rgba(255,255,255,.6)';ctx.lineWidth=1.5;ctx.stroke();
 
-        const AL=38;
-        const p1=kps[1],p4=kps[4],p2=kps[2],p6=kps[6];
-        if(valid(p1)&&valid(p4)) drawArrow(cp,p4.x-p1.x,p4.y-p1.y,AL,C.axisX,'X');
-        if(valid(p2)&&valid(p6)) drawArrow(cp,p6.x-p2.x,p6.y-p2.y,AL,C.axisY,'Y');
-        if(valid(p1)&&valid(p2)) drawArrow(cp,p1.x-p2.x,p1.y-p2.y,AL*.7,C.axisZ,'Z');
+        // ── Axis arrows ──
+        const p1=pts[1],p4=pts[4],p2=pts[2],p6=pts[6];
+        function ax(a,b,col,l){
+          if(!a||!b||a.x==null||b.x==null) return;
+          arrow(cp.x,cp.y,b.x-a.x,b.y-a.y,38,col,l);
+        }
+        ax(p1,p4,C.ax,'X');
+        ax(p2,p6,C.ay,'Y');
+        if(p1&&p2&&p1.x!=null&&p2.x!=null) arrow(cp.x,cp.y,p1.x-p2.x,p1.y-p2.y,27,C.az,'Z');
       }
 
       // ── Label ──
-      const conf=det.score!=null?Math.round(det.score*100):
-                 det.confidence!=null?Math.round(det.confidence*100):null;
-      const catJa={Cup:'カップ',Chair:'椅子',Camera:'カメラ',Shoe:'靴'};
-      const lbl=(catJa[currentCat]||currentCat)+(conf!=null?` ${conf}%`:'');
-      if(valid(cp)){
+      const conf=det.score!=null?Math.round(det.score*100):null;
+      const ja={Cup:'カップ',Chair:'椅子',Camera:'カメラ',Shoe:'靴'};
+      const lbl=(ja[currentCat]||currentCat)+(conf!=null?` ${conf}%`:'');
+      if(cp&&cp.x!=null&&!isNaN(cp.x)){
         ctx.font='bold 13px "Helvetica Neue",sans-serif';
-        ctx.textBaseline='middle'; ctx.textAlign='center';
+        ctx.textBaseline='middle';ctx.textAlign='center';
         const tw=ctx.measureText(lbl).width+14;
-        ctx.fillStyle='rgba(0,0,0,.72)'; ctx.fillRect(cp.x-tw/2,cp.y-30,tw,21);
-        ctx.fillStyle=C.label; ctx.fillText(lbl,cp.x,cp.y-19);
+        ctx.fillStyle='rgba(0,0,0,.72)';ctx.fillRect(cp.x-tw/2,cp.y-30,tw,21);
+        ctx.fillStyle=C.lbl;ctx.fillText(lbl,cp.x,cp.y-19);
         ctx.textAlign='left';
       }
 
-      // ── DOM update ──
+      // ── DOM (first detection) ──
       if(di===0){
+        const T=det.translation,R=det.rotation,S=det.scale;
+        function sv(id,v,s=''){
+          const el=document.getElementById(id);
+          if(!el)return;
+          el.textContent=v!=null&&!isNaN(v)?(typeof v==='number'?v.toFixed(2):v)+s:'--'+(s||'');
+        }
+        if(S){sv('v-sw',S[0],'m');sv('v-sh',S[1],'m');sv('v-sd',S[2],'m');}
+        if(T){sv('v-tx',T[0],'');sv('v-ty',T[1],'');sv('v-tz',T[2],'m');}
+        if(T&&T[2]) sv('dist-val',T[2]);
         if(conf!=null) document.getElementById('conf-val').textContent=conf;
-        const w3=dist2d(kps[1],kps[4]),h3=dist2d(kps[1],kps[5]),d3=dist2d(kps[1],kps[2]);
-        function sv(id,v,s=''){ document.getElementById(id).textContent=v!=null&&!isNaN(v)?Math.round(v)+s:'--'+(s||''); }
-        sv('v-w',w3,'px'); sv('v-h',h3,'px'); sv('v-d',d3,'px');
-        if(valid(cp)){ sv('v-cx',cp.x/vw*100,'%'); sv('v-cy',cp.y/vh*100,'%'); }
-        const rot=estimateRotation(rawFor3D);
-        sv('v-rx',rot.rx,'°'); sv('v-ry',rot.ry,'°'); sv('v-rz',rot.rz,'°');
-        sv('v-vis', kps.filter((p,i)=>i>=1&&valid(p)).length, '/8');
-        sv('v-area', projectedArea(kps,vw,vh), '%');
-        sv('dist-val', estimateDist(kps,vw));
+        const euler=matToEuler(R);
+        sv('v-pitch',euler.pitch,'°');sv('v-yaw',euler.yaw,'°');sv('v-roll',euler.roll,'°');
+        sv('v-area',projArea(pts,vw,vh),'%');
       }
     });
 
@@ -721,34 +641,29 @@
       `${dets.length}個の物体を検出中 (${currentCat})`;
   }
 
-  function drawArrow(from,dx,dy,len,col,label){
+  function arrow(ox,oy,dx,dy,len,col,label){
     const l=Math.sqrt(dx*dx+dy*dy)||1;
-    const tx=from.x+dx/l*len, ty=from.y+dy/l*len;
-    ctx.beginPath(); ctx.moveTo(from.x,from.y); ctx.lineTo(tx,ty);
-    ctx.strokeStyle=col; ctx.lineWidth=2.2;
-    ctx.shadowColor=col; ctx.shadowBlur=4; ctx.stroke(); ctx.shadowBlur=0;
+    const tx=ox+dx/l*len,ty=oy+dy/l*len;
+    ctx.beginPath();ctx.moveTo(ox,oy);ctx.lineTo(tx,ty);
+    ctx.strokeStyle=col;ctx.lineWidth=2.2;
+    ctx.shadowColor=col;ctx.shadowBlur=4;ctx.stroke();ctx.shadowBlur=0;
     const a=Math.atan2(dy,dx),hs=7;
-    ctx.beginPath();
-    ctx.moveTo(tx,ty);
+    ctx.beginPath();ctx.moveTo(tx,ty);
     ctx.lineTo(tx-hs*Math.cos(a-.4),ty-hs*Math.sin(a-.4));
     ctx.lineTo(tx-hs*Math.cos(a+.4),ty-hs*Math.sin(a+.4));
-    ctx.closePath(); ctx.fillStyle=col; ctx.fill();
-    ctx.font='bold 9px sans-serif'; ctx.textBaseline='middle'; ctx.textAlign='center';
-    ctx.fillStyle=col; ctx.fillText(label,tx+dx/l*9,ty+dy/l*9);
+    ctx.closePath();ctx.fillStyle=col;ctx.fill();
+    ctx.font='bold 9px sans-serif';ctx.textBaseline='middle';ctx.textAlign='center';
+    ctx.fillStyle=col;ctx.fillText(label,tx+dx/l*9,ty+dy/l*9);
     ctx.textAlign='left';
   }
 
   // ── Controls ──
   document.querySelectorAll('.cat-btn').forEach(b=>{
-    b.addEventListener('click',()=>switchCategory(b.dataset.cat));
+    b.addEventListener('click',()=>switchCat(b.dataset.cat));
   });
   document.getElementById('cam-btn').addEventListener('click',async()=>{
     facingMode=facingMode==='environment'?'user':'environment';
-    if(running){
-      cancelAnimationFrame(animId);
-      await startCamera(); lastTime=0; fpsArr=[];
-      animId=requestAnimationFrame(loop);
-    }
+    if(running){cancelAnimationFrame(animId);await startCamera();lastTime=0;fpsArr=[];animId=requestAnimationFrame(loop);}
   });
   document.getElementById('start-btn').addEventListener('click',()=>{
     document.getElementById('splash').style.display='none';
@@ -757,10 +672,11 @@
   document.getElementById('perm-btn').addEventListener('click',async()=>{
     document.getElementById('perm').classList.remove('show');
     try{
-      await startCamera(); running=true;
+      await startCamera();running=true;
       document.getElementById('status-dot').classList.remove('loading');
       document.getElementById('v-cat').textContent=currentCat;
-      lastTime=performance.now(); animId=requestAnimationFrame(loop);
+      repositionBelowHeader();
+      lastTime=performance.now();animId=requestAnimationFrame(loop);
     }catch(e){
       document.getElementById('status-dot').classList.add('error');
       document.querySelector('#perm p').textContent=
@@ -769,13 +685,12 @@
     }
   });
 
-  window.addEventListener('resize',resizeCanvas);
+  window.addEventListener('resize',()=>{resizeCanvas();repositionBelowHeader();});
   if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
 
   loadModel().catch(e=>{
     document.getElementById('splash-msg').textContent='読み込み失敗: '+e.message;
     document.getElementById('status-dot').classList.add('error');
-    // Auto-open debug on failure
     debugMode=true;
     document.getElementById('debug-panel').classList.add('show');
     document.getElementById('dbg-btn').classList.add('active');
@@ -783,5 +698,6 @@
   });
 })();
 </script>
+
 </body>
 </html>
