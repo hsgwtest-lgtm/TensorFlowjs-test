@@ -1,4 +1,4 @@
-const CACHE = "stylechange-v1";
+const CACHE = "stylechange-v2";
 const BASE  = "/TensorFlowjs-test/stylechange/";
 const ASSETS = [BASE, BASE + "index.html", BASE + "manifest.json"];
 
