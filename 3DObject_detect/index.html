@@ -343,6 +343,7 @@
       if(cz3<=0) return {x:null,y:null,z:cz3};
       let x=focal*cx3/cz3+ppx;
       let y=focal*cy3/cz3+ppy;
+      if(isNaN(x)||isNaN(y)) return {x:null,y:null,z:cz3};
       if(doMirror) x=vw-x;
       return {x,y,z:cz3};
     });
@@ -377,6 +378,7 @@
   let currentCat='Cup', switching=false, debugMode=false;
   let lastResults=null, rawSnap=null;
   let dbgLog=[];
+  let lastDebugExtra={zFront:null,zBack:null,projNaN:null,lastErr:null};
 
   const video  = document.getElementById('video');
   const canvas = document.getElementById('canvas');
@@ -403,27 +405,50 @@
     let h=`<div class="dh">─── DEBUG ───</div>`;
     h+=`<div><span class="dk">Objectron</span><span class="${ObjClass?'ok':'ng'}">${ObjClass?'✓ loaded':'✗ MISSING'}</span></div>`;
     h+=`<div><span class="dk">CDN</span><span class="dv">${locateBase.replace('https://','').split('/').slice(0,3).join('/')||'--'}</span></div>`;
-    h+=`<div><span class="dk">video</span><span class="dv">${vw}×${vh} / ${facingMode}</span></div>`;
+    h+=`<div><span class="dk">video</span><span class="dv">${vw}×${vh} readyState:${video.readyState} ${vw?video.videoWidth+'×'+video.videoHeight:'--'} / ${facingMode}</span></div>`;
+    h+=`<div><span class="dk">UserAgent</span><span class="dv">${navigator.userAgent.slice(0,80)}</span></div>`;
     h+=`<div><span class="dk">detections</span><span class="dv">${dets?dets.length:'--'}</span></div>`;
+    if(lastDebugExtra.zFront!=null||lastDebugExtra.zBack!=null){
+      h+=`<div><span class="dk">zFront</span><span class="dv">${lastDebugExtra.zFront!=null?lastDebugExtra.zFront.toFixed(4):'--'}</span></div>`;
+      h+=`<div><span class="dk">zBack</span><span class="dv">${lastDebugExtra.zBack!=null?lastDebugExtra.zBack.toFixed(4):'--'}</span></div>`;
+    }
+    if(lastDebugExtra.projNaN!=null){
+      h+=`<div><span class="dk">projNaN pts</span><span class="${lastDebugExtra.projNaN?'ng':'ok'} dv">${lastDebugExtra.projNaN?'✗ NaN found':'✓ all ok'}</span></div>`;
+    }
+    if(lastDebugExtra.lastErr){
+      h+=`<div class="dh">── Error ──</div>`;
+      h+=`<div><span class="ng">${String(lastDebugExtra.lastErr).slice(0,120)}</span></div>`;
+      if(lastDebugExtra.lastErr.stack){
+        h+=`<div><span class="dv" style="font-size:9px">${lastDebugExtra.lastErr.stack.slice(0,200).replace(/\n/g,'<br>')}</span></div>`;
+      }
+    }
     if(rawSnap){
       h+=`<div class="dh">── results ──</div>`;
       const keys=Object.keys(rawSnap);
       h+=`<div><span class="dk">keys</span><span class="dv">[${keys.join(',')}]</span></div>`;
       if(rawSnap.objectDetections?.length){
-        const d=rawSnap.objectDetections[0];
-        const dk=Object.keys(d);
-        h+=`<div><span class="dk">[0].keys</span><span class="dv">[${dk.join(',')}]</span></div>`;
-        ['translation','rotation','scale'].forEach(f=>{
-          const v=d[f];
-          if(v!=null){
-            const s=Array.isArray(v)?v.slice(0,4).map(x=>typeof x==='number'?x.toFixed(3):x).join(','):typeof v;
-            h+=`<div><span class="dk">.${f}</span><span class="dv ok">len:${v.length||'?'} [${s}…]</span></div>`;
+        rawSnap.objectDetections.forEach((d,di)=>{
+          h+=`<div class="dh">── det[${di}] ──</div>`;
+          const dk=Object.keys(d);
+          h+=`<div><span class="dk">.keys</span><span class="dv">[${dk.join(',')}]</span></div>`;
+          ['score','confidence'].forEach(f=>{
+            const v=d[f];
+            h+=`<div><span class="dk">.${f}</span><span class="${v!=null?'ok':'ng'} dv">${v!=null?v:'undefined'}</span></div>`;
+          });
+          ['translation','rotation','scale'].forEach(f=>{
+            const v=d[f];
+            if(v!=null){
+              const s=Array.isArray(v)?v.slice(0,4).map(x=>typeof x==='number'?x.toFixed(3):x).join(','):typeof v;
+              h+=`<div><span class="dk">.${f}</span><span class="dv ok">len:${v.length||'?'} [${s}…]</span></div>`;
+            }else{
+              h+=`<div><span class="dk">.${f}</span><span class="ng dv">undefined</span></div>`;
+            }
+          });
+          if(d.translation){
+            const T=d.translation;
+            h+=`<div><span class="dk">distance(Tz)</span><span class="dv ok">${typeof T[2]==='number'?T[2].toFixed(3)+'m':'?'}</span></div>`;
           }
         });
-        if(d.translation){
-          const T=d.translation;
-          h+=`<div><span class="dk">distance(Tz)</span><span class="dv ok">${typeof T[2]==='number'?T[2].toFixed(3)+'m':'?'}</span></div>`;
-        }
       }
     }
     if(dbgLog.length){
@@ -557,8 +582,14 @@
       if(!pts) return;
 
       // z-depth for front/back sorting
-      const zFront=(pts[2]?.z||0+pts[3]?.z||0+pts[6]?.z||0+pts[7]?.z||0)/4;
-      const zBack =(pts[1]?.z||0+pts[4]?.z||0+pts[5]?.z||0+pts[8]?.z||0)/4;
+      const zFront=((pts[2]?.z||0)+(pts[3]?.z||0)+(pts[6]?.z||0)+(pts[7]?.z||0))/4;
+      const zBack =((pts[1]?.z||0)+(pts[4]?.z||0)+(pts[5]?.z||0)+(pts[8]?.z||0))/4;
+      if(di===0){
+        lastDebugExtra.zFront=zFront;
+        lastDebugExtra.zBack=zBack;
+        lastDebugExtra.projNaN=pts.some(p=>p&&(isNaN(p.x)||isNaN(p.y)));
+        console.log('[3DOBJ] zFront='+zFront.toFixed(4)+' zBack='+zBack.toFixed(4));
+      }
       const frontClose=zFront<=zBack; // smaller z = closer in camera space
 
       ctx.lineCap='round';ctx.lineJoin='round';
@@ -606,7 +637,10 @@
       }
 
       // ── Label ──
-      const conf=det.score!=null?Math.round(det.score*100):null;
+      const conf = det.score != null ? Math.round(det.score * 100)
+                 : det.confidence != null ? Math.round(det.confidence * 100)
+                 : null;
+      console.log('[3DOBJ] det['+di+'] conf='+conf+' score='+det.score+' confidence='+det.confidence);
       const ja={Cup:'カップ',Chair:'椅子',Camera:'カメラ',Shoe:'靴'};
       const lbl=(ja[currentCat]||currentCat)+(conf!=null?` ${conf}%`:'');
       if(cp&&cp.x!=null&&!isNaN(cp.x)){
@@ -633,6 +667,7 @@
         const euler=matToEuler(R);
         sv('v-pitch',euler.pitch,'°');sv('v-yaw',euler.yaw,'°');sv('v-roll',euler.roll,'°');
         sv('v-area',projArea(pts,vw,vh),'%');
+        console.log('[3DOBJ] T=',T,'S=',S,'euler=',euler);
       }
     });
 
@@ -689,12 +724,18 @@
   if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
 
   loadModel().catch(e=>{
-    document.getElementById('splash-msg').textContent='読み込み失敗: '+e.message;
+    lastDebugExtra.lastErr=e;
+    const msgEl=document.getElementById('splash-msg');
+    msgEl.textContent='ライブラリ読み込み失敗 — デバッグパネルを確認してください';
+    msgEl.style.color='#f66';
+    document.getElementById('start-btn').textContent='▶ カメラ起動（ライブラリなし）';
+    document.getElementById('start-btn').classList.add('show');
     document.getElementById('status-dot').classList.add('error');
     debugMode=true;
     document.getElementById('debug-panel').classList.add('show');
     document.getElementById('dbg-btn').classList.add('active');
-    console.error(e);
+    renderDebug(null,0,0);
+    console.error('[3DOBJ] loadModel failed:', e);
   });
 })();
 </script>
