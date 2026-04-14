@@ -670,7 +670,7 @@
 
     // Add birth log message to DOM
     const sp = SPECIES[species];
-    const roleName = role === ROLE_SOLDIER ? '兵隊' : '働き';
+    const roleName = role === ROLE_SOLDIER ? '兵隊' : role === ROLE_QUEEN ? '女王' : '働き';
     const log = document.getElementById('birth-log');
     const msg = document.createElement('div');
     msg.className = 'birth-msg';
